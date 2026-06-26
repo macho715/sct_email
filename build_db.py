@@ -83,32 +83,57 @@ def build():
     con.close()
 
 
-def add_embeddings(db_path: Path, api_key: str) -> None:
+def add_embeddings(db_path: Path) -> None:
     """
-    Google text-embedding-004로 emails 테이블에 벡터 임베딩 추가.
-    이미 임베딩된 행은 건너뜀 (re-runnable).
+    sentence-transformers all-MiniLM-L6-v2로 emails 테이블에 벡터 임베딩 추가 (384 dim).
+    기존 embedding 컬럼을 DROP 후 FLOAT[384]로 재생성 (dim 변경 대응).
     """
-    import google.generativeai as genai
+    from sentence_transformers import SentenceTransformer
 
-    genai.configure(api_key=api_key)
+    print("Loading all-MiniLM-L6-v2 model (first run downloads ~80MB) ...")
+    model = SentenceTransformer("all-MiniLM-L6-v2")
 
     con = duckdb.connect(str(db_path))
 
-    # Add embedding column if not exists
-    con.execute("ALTER TABLE emails ADD COLUMN IF NOT EXISTS embedding FLOAT[768]")
+    # Drop ALL indexes/FTS that block ALTER TABLE
+    for drop_sql, label in [
+        ("DROP INDEX IF EXISTS idx_month",        "idx_month"),
+        ("DROP INDEX IF EXISTS idx_stage",        "idx_stage"),
+        ("DROP INDEX IF EXISTS idx_site",         "idx_site"),
+        ("DROP INDEX IF EXISTS idx_embedding_hnsw", "idx_embedding_hnsw (HNSW)"),
+    ]:
+        try:
+            con.execute(drop_sql)
+            print(f"  Dropped {label}.")
+        except Exception as exc:
+            print(f"  {label} drop skipped: {exc}")
 
-    total_pending = con.execute(
-        "SELECT COUNT(*) FROM emails WHERE embedding IS NULL"
-    ).fetchone()[0]
+    # Drop FTS auxiliary tables
+    try:
+        con.execute("INSTALL fts")
+        con.execute("LOAD fts")
+        con.execute("PRAGMA drop_fts_index('emails')")
+        print("  FTS index dropped.")
+    except Exception as exc:
+        print(f"  FTS drop skipped: {exc}")
 
-    if total_pending == 0:
-        print("All rows already have embeddings — nothing to do.")
-        con.close()
-        return
+    # Drop HNSW if VSS needed for proper removal
+    try:
+        con.execute("INSTALL vss")
+        con.execute("LOAD vss")
+        con.execute("DROP INDEX IF EXISTS idx_embedding_hnsw")
+    except Exception:
+        pass
 
-    print(f"Embedding {total_pending:,} rows with text-embedding-004 ...")
+    # Now drop and recreate embedding column as FLOAT[384]
+    con.execute("ALTER TABLE emails DROP COLUMN IF EXISTS embedding")
+    con.execute("ALTER TABLE emails ADD COLUMN embedding FLOAT[384]")
+    print("embedding column reset to FLOAT[384].")
 
-    BATCH = 100
+    total = con.execute("SELECT COUNT(*) FROM emails").fetchone()[0]
+    print(f"Embedding {total:,} rows with all-MiniLM-L6-v2 (384 dim) ...")
+
+    BATCH = 256
     processed = 0
 
     while True:
@@ -121,34 +146,14 @@ def add_embeddings(db_path: Path, api_key: str) -> None:
         if not rows:
             break
 
-        # Build texts for this batch
         texts = []
-        for row_no, subject, body in rows:
+        for _, subject, body in rows:
             subject_str = subject or ""
             body_str = (body or "")[:500]
             texts.append(f"{subject_str} {body_str}".strip())
 
-        # Call Google embedding API
-        try:
-            result = genai.embed_content(
-                model="models/text-embedding-004",
-                content=texts,
-                task_type="RETRIEVAL_DOCUMENT",
-            )
-            embeddings = result["embedding"]
-        except Exception as exc:
-            print(f"\n  [WARN] Embedding API error for batch at row {processed}: {exc}")
-            # Skip this batch to avoid infinite loop — mark as empty list sentinel
-            # by advancing: update with None placeholder won't work, so just skip
-            # Update a dummy value so these rows are not re-fetched endlessly
-            row_nos = [r[0] for r in rows]
-            placeholders = ", ".join("?" * len(row_nos))
-            # Leave embedding NULL but log; move on by breaking if first batch fails
-            print("  Skipping batch and continuing...")
-            time.sleep(1.0)
-            continue
+        embeddings = model.encode(texts, normalize_embeddings=True).tolist()
 
-        # Update each row's embedding
         for (row_no, _, _), embedding in zip(rows, embeddings):
             con.execute(
                 'UPDATE emails SET embedding = ? WHERE "no" = ?',
@@ -156,20 +161,25 @@ def add_embeddings(db_path: Path, api_key: str) -> None:
             )
 
         processed += len(rows)
-
-        if processed % 1000 < BATCH:
-            print(f"  Progress: {processed:,} / {total_pending:,} rows embedded")
-
-        # Rate-limit: 0.05s between batches
-        time.sleep(0.05)
+        if processed % 5000 < BATCH:
+            print(f"  Progress: {processed:,} / {total:,} rows embedded")
 
     print(f"\nEmbedding complete — {processed:,} rows updated.")
 
-    # Create HNSW index if duckdb-vss is available
+    # Recreate regular indexes
+    con.execute('CREATE INDEX IF NOT EXISTS idx_month ON emails("month")')
+    con.execute('CREATE INDEX IF NOT EXISTS idx_stage ON emails("stage")')
+    con.execute('CREATE INDEX IF NOT EXISTS idx_site  ON emails("site")')
+    print("Regular indexes recreated.")
+
+    # Recreate HNSW index
     try:
-        con.execute("INSTALL vss; LOAD vss;")
+        con.execute("INSTALL vss")
+        con.execute("LOAD vss")
+        con.execute("SET hnsw_enable_experimental_persistence=true")
+        con.execute("DROP INDEX IF EXISTS idx_embedding_hnsw")
         con.execute("""
-            CREATE INDEX IF NOT EXISTS idx_embedding_hnsw
+            CREATE INDEX idx_embedding_hnsw
             ON emails USING HNSW (embedding)
             WITH (metric = 'cosine')
         """)
@@ -177,16 +187,28 @@ def add_embeddings(db_path: Path, api_key: str) -> None:
     except Exception as exc:
         print(f"duckdb-vss not available — skipping HNSW index. ({exc})")
 
+    # Recreate FTS index (overwrite=1)
+    try:
+        con.execute("INSTALL fts")
+        con.execute("LOAD fts")
+        con.execute("""
+            PRAGMA create_fts_index(
+                'emails', 'no',
+                'subject', 'sendername', 'senderemail',
+                'recipientto', 'plaintextbody',
+                'hvdc_cases', 'company_name',
+                stemmer='english', stopwords='english',
+                ignore='(\\.|[^a-z])+',
+                strip_accents=1, lower=1, overwrite=1
+            )
+        """)
+        print("FTS index recreated.")
+    except Exception as exc:
+        print(f"FTS index recreation failed: {exc}")
+
     con.close()
 
 
 if __name__ == "__main__":
     build()
-
-    if "GOOGLE_API_KEY" in os.environ:
-        add_embeddings(DB, os.environ["GOOGLE_API_KEY"])
-    else:
-        print(
-            "GOOGLE_API_KEY not set — skipping embeddings. "
-            "Run with: GOOGLE_API_KEY=AIza... python build_db.py"
-        )
+    add_embeddings(DB)

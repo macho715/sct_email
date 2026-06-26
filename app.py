@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 from pathlib import Path
 
 # ── DB 설정 ─────────────────────────────────────────────────────────
-DB_URL   = "https://github.com/macho715/sct_email/releases/download/v1.0/hvdc_mail.duckdb"
+DB_URL   = "https://github.com/macho715/sct_email/releases/download/v2.0/hvdc_mail.duckdb"
 DB_LOCAL = Path("/tmp/hvdc_mail.duckdb")
 
 # ── 브랜드 색상 (Samsung C&T Navy) ──────────────────────────────────
@@ -167,9 +167,8 @@ def get_anomaly_alerts() -> pd.DataFrame:
 @st.cache_data(ttl=1800, show_spinner=False)
 def summarize_with_gemini(subject: str, body: str, api_key: str) -> str:
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        from google import genai
+        client = genai.Client(api_key=api_key)
         prompt = f"""다음 HVDC 프로젝트 이메일을 한국어로 요약하세요.
 형식:
 • 목적: (1줄)
@@ -179,23 +178,27 @@ def summarize_with_gemini(subject: str, body: str, api_key: str) -> str:
 제목: {subject}
 본문:
 {str(body or '')[:3000]}"""
-        resp = model.generate_content(prompt)
+        resp = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
         return resp.text
     except Exception as e:
         return f"오류: {e}"
 
 
-# ── Feature 2: 시맨틱 검색 (text-embedding-004) ──────────────────
-def get_query_embedding(query: str, api_key: str):
+# ── Feature 2: 시맨틱 검색 (sentence-transformers all-MiniLM-L6-v2, 384 dim) ─
+@st.cache_resource(show_spinner=False)
+def _get_st_model():
+    from sentence_transformers import SentenceTransformer
+    return SentenceTransformer("all-MiniLM-L6-v2")
+
+
+def get_query_embedding(query: str, api_key: str = ""):
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        result = genai.embed_content(
-            model="models/text-embedding-004",
-            content=query,
-            task_type="RETRIEVAL_QUERY",
-        )
-        return result["embedding"]
+        model = _get_st_model()
+        vec = model.encode([query], normalize_embeddings=True)[0].tolist()
+        return vec
     except Exception as e:
         st.error(f"임베딩 오류: {e}")
         return None
@@ -719,48 +722,41 @@ with tab_analytics:
 # TAB 3 — 시맨틱 검색 (Feature 2 + 6)
 # ════════════════════════════════════════════════════════════════
 with tab_semantic:
-    st.subheader("🤖 시맨틱 검색 (Google text-embedding-004)")
+    st.subheader("🤖 시맨틱 검색 (all-MiniLM-L6-v2, 384 dim)")
 
-    google_api_key = st.secrets.get("google_api_key", "")
-
-    if not google_api_key:
-        st.warning(
-            "Gemini API Key가 없습니다. Streamlit Secrets에 `google_api_key`를 추가하면 "
-            "시맨틱 검색을 사용할 수 있습니다."
+    _has_emb = has_embeddings()
+    if not _has_emb:
+        st.info(
+            "임베딩 데이터가 없습니다. 로컬에서 `build_db.py`를 실행하여 DB를 재빌드하세요:\n\n"
+            "```bash\n"
+            "python build_db.py\n"
+            "```\n\n"
+            "완료 후 GitHub Release에 v2.0으로 재업로드하고 `DB_URL`을 업데이트하세요."
         )
     else:
-        _has_emb = has_embeddings()
-        if not _has_emb:
-            st.info(
-                "임베딩 데이터가 없습니다. `build_db.py`를 실행하여 DB를 재빌드하세요:\n\n"
-                "```bash\n"
-                "GOOGLE_API_KEY=AIza... python build_db.py\n"
-                "```\n\n"
-                "완료 후 GitHub Release에 v2.0으로 재업로드하고 `DB_URL`을 업데이트하세요."
-            )
-        else:
-            sem_query = st.text_input(
-                "의미 기반 검색어",
-                placeholder="예: transformer installation schedule delay",
-                help="정확한 키워드 대신 의미로 검색합니다",
-            )
-            sem_top_k = st.slider("결과 수", 10, 100, 30, 10)
-            use_hybrid = st.checkbox("BM25 + 시맨틱 Hybrid (권장)", value=True)
+        google_api_key = st.secrets.get("google_api_key", "")
+        sem_query = st.text_input(
+            "의미 기반 검색어",
+            placeholder="예: transformer installation schedule delay",
+            help="정확한 키워드 대신 의미로 검색합니다",
+        )
+        sem_top_k = st.slider("결과 수", 10, 100, 30, 10)
+        use_hybrid = st.checkbox("BM25 + 시맨틱 Hybrid (권장)", value=True)
 
-            if sem_query and st.button("🔍 시맨틱 검색 실행"):
-                with st.spinner("임베딩 생성 중..."):
-                    qvec = get_query_embedding(sem_query, google_api_key)
+        if sem_query and st.button("🔍 시맨틱 검색 실행"):
+            with st.spinner("임베딩 생성 중..."):
+                qvec = get_query_embedding(sem_query)
 
-                if qvec:
-                    with st.spinner("벡터 검색 중..."):
-                        vec_df = run_query(
-                            f"SELECT no, subject, sendername, deliverytime, company_name, "
-                            f"array_cosine_similarity(embedding, ?::FLOAT[768]) AS cosine_score "
-                            f"FROM emails "
-                            f"WHERE embedding IS NOT NULL "
-                            f"ORDER BY cosine_score DESC LIMIT {sem_top_k * 2}",
-                            [qvec],
-                        )
+            if qvec:
+                with st.spinner("벡터 검색 중..."):
+                    vec_df = run_query(
+                        f"SELECT no, subject, sendername, deliverytime, company_name, "
+                        f"array_cosine_similarity(embedding, ?::FLOAT[384]) AS cosine_score "
+                        f"FROM emails "
+                        f"WHERE embedding IS NOT NULL "
+                        f"ORDER BY cosine_score DESC LIMIT {sem_top_k * 2}",
+                        [qvec],
+                    )
 
                     if use_hybrid and sem_query:
                         bm25_df = run_query(
