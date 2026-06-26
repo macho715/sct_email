@@ -1,0 +1,7 @@
+hvdc_mail.duckdb
+*.duckdb
+*.xlsx
+__pycache__/
+*.pyc
+.env
+.streamlit/secrets.toml
