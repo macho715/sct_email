@@ -199,7 +199,7 @@ with tab_search:
     COLS_SHOW = [
         "no", "month", "subject", "sendername", "senderemail",
         "company_name", "recipientto", "deliverytime",
-        "site", "stage", "hvdc_cases", "primary_case",
+        "site", "stage", "hvdc_cases", "primary_case", "linkkey",
     ]
 
     WHERE: list[str] = []
@@ -273,15 +273,27 @@ with tab_search:
         else:
             st.info("왼쪽 사이드바에서 키워드 또는 필터를 입력하면 이메일을 검색합니다.")
     else:
+        # linkkey → Google Drive search URL 변환
+        df_show = df.copy()
+        if "linkkey" in df_show.columns:
+            df_show["pdf_link"] = df_show["linkkey"].apply(
+                lambda k: f"https://drive.google.com/drive/search?q={k}"
+                if k and str(k).strip() not in ("", "None", "nan") else None
+            )
+            df_show = df_show.drop(columns=["linkkey"])
+        else:
+            df_show["pdf_link"] = None
+
         st.dataframe(
-            df,
+            df_show,
             use_container_width=True,
             column_config={
-                "subject":      st.column_config.TextColumn("제목",         width=300),
-                "senderemail":  st.column_config.TextColumn("발신자",        width=200),
+                "subject":      st.column_config.TextColumn("제목",         width=280),
+                "senderemail":  st.column_config.TextColumn("발신자",        width=180),
                 "deliverytime": st.column_config.TextColumn("수신일시",      width=140),
-                "hvdc_cases":   st.column_config.TextColumn("HVDC Cases",   width=180),
+                "hvdc_cases":   st.column_config.TextColumn("HVDC Cases",   width=170),
                 "bm25_score":   st.column_config.NumberColumn("관련도", format="%.3f"),
+                "pdf_link":     st.column_config.LinkColumn("📄 PDF", display_text="열기", width=70),
             },
             hide_index=True,
             height=500,
@@ -300,7 +312,7 @@ with tab_search:
         if row_no:
             body_df = run_query(
                 "SELECT subject, sendername, senderemail, deliverytime, "
-                "recipientto, plaintextbody FROM emails WHERE no = ?",
+                "recipientto, plaintextbody, linkkey FROM emails WHERE no = ?",
                 [str(row_no)],
             )
             if not body_df.empty:
@@ -312,9 +324,14 @@ with tab_search:
                 col_b.markdown(f"**수신자**  \n{r['recipientto']}")
                 st.text_area("본문", value=r["plaintextbody"] or "(본문 없음)", height=380)
 
-                st.markdown("📎 **첨부 PDF 폴더** (날짜별로 분할 저장):")
-                for _label, _url in DRIVE_FOLDERS:
-                    st.markdown(f"- [{_label}]({_url})")
+                lk = r.get("linkkey") if hasattr(r, "get") else r["linkkey"]
+                if lk and str(lk).strip() not in ("", "None", "nan"):
+                    pdf_url = f"https://drive.google.com/drive/search?q={lk}"
+                    st.link_button("📄 첨부 PDF 열기 (Google Drive)", pdf_url, type="primary")
+                else:
+                    st.markdown("📎 **첨부 PDF 폴더** (날짜별로 분할 저장):")
+                    for _label, _url in DRIVE_FOLDERS:
+                        st.markdown(f"- [{_label}]({_url})")
 
         st.divider()
         st.download_button(
