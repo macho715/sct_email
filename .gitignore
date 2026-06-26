@@ -1,7 +1,31 @@
+# Database (hosted on GitHub Releases)
 hvdc_mail.duckdb
 *.duckdb
+
+# Raw data files
 *.xlsx
+*.xlsm
+~$*
+
+# Secrets
+.streamlit/secrets.toml
+.env
+
+# Python
 __pycache__/
 *.pyc
-.env
-.streamlit/secrets.toml
+*.pyo
+.venv/
+venv/
+
+# Logs & temp
+embedding_log.txt
+*.log
+
+# Claude Code internal
+.claude/
+graphify-out/
+
+# Session artifacts
+20260626_*.md
+20260627_*.md
