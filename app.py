@@ -13,6 +13,7 @@ from pathlib import Path
 # ── DB 설정 ─────────────────────────────────────────────────────────
 DB_URL   = "https://github.com/macho715/sct_email/releases/download/v2.0/hvdc_mail.duckdb"
 DB_LOCAL = Path("/tmp/hvdc_mail_v2.duckdb")
+_DB_TMP  = Path("/tmp/hvdc_mail_v2.duckdb.tmp")
 
 # ── 브랜드 색상 (Samsung C&T Navy) ──────────────────────────────────
 _SEQ = [
@@ -69,24 +70,9 @@ div[data-testid="stAlert"] { border-radius: 8px; }
 """, unsafe_allow_html=True)
 
 
-# ── DB 다운로드 + 연결 ─────────────────────────────────────────────
+# ── DB 연결 (다운로드는 top-level에서 처리) ──────────────────────────
 @st.cache_resource
 def get_con():
-    if not DB_LOCAL.exists():
-        progress_text = "DB 다운로드 중... (최초 1회 약 1~2분)"
-        bar = st.progress(0, text=progress_text)
-        with requests.get(DB_URL, stream=True) as r:
-            r.raise_for_status()
-            total = int(r.headers.get("content-length", 0))
-            downloaded = 0
-            with open(DB_LOCAL, "wb") as f:
-                for chunk in r.iter_content(chunk_size=1024 * 256):
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if total:
-                        pct = min(int(downloaded / total * 100), 100)
-                        bar.progress(pct, text=f"{progress_text} ({pct}%)")
-        bar.empty()
     con = duckdb.connect(str(DB_LOCAL), read_only=True)
     try:
         con.execute("LOAD fts;")
@@ -222,6 +208,38 @@ def has_embeddings() -> bool:
 st.title("✉ HVDC Email Search")
 st.caption("OUTLOOK HVDC 전체 이메일 데이터 — DuckDB FTS · Gemini AI · Samsung C&T / ADNOC")
 
+# ── DB 초기화 (atomic, top-level) ────────────────────────────────
+if _DB_TMP.exists():
+    _DB_TMP.unlink(missing_ok=True)
+
+if not DB_LOCAL.exists():
+    _download_error = None
+    with st.status("DB 초기화 중...", expanded=True) as _status:
+        _bar = st.progress(0)
+        try:
+            with requests.get(DB_URL, stream=True, timeout=(30, 900)) as _r:
+                _r.raise_for_status()
+                _total = int(_r.headers.get("content-length", 0))
+                _downloaded = 0
+                with open(_DB_TMP, "wb") as _f:
+                    for _chunk in _r.iter_content(chunk_size=256 * 1024):
+                        _f.write(_chunk)
+                        _downloaded += len(_chunk)
+                        if _total:
+                            _pct = min(int(_downloaded / _total * 100), 100)
+                            _bar.progress(_pct, text=f"{_downloaded//1024//1024} MB / {_total//1024//1024} MB")
+            _DB_TMP.rename(DB_LOCAL)
+            _status.update(label="✅ DB 준비 완료!", state="complete")
+        except Exception as _exc:
+            _DB_TMP.unlink(missing_ok=True)
+            _download_error = str(_exc)
+            _status.update(label="❌ 다운로드 실패", state="error")
+    if _download_error:
+        st.error(f"DB 다운로드 실패: {_download_error}")
+        st.stop()
+    else:
+        st.rerun()
+
 months, sites, stages = load_filter_options()
 
 # ── 첨부파일 폴더 링크 ────────────────────────────────────────────
@@ -273,10 +291,24 @@ with st.sidebar:
         st.markdown(f"[{_label}]({_url})")
 
     st.divider()
-    if st.button("캐시 초기화", use_container_width=True):
+    with st.expander("🛠 DB 진단", expanded=False):
+        if DB_LOCAL.exists():
+            _size_mb = DB_LOCAL.stat().st_size // 1024 // 1024
+            st.code(f"Path: {DB_LOCAL}\nSize: {_size_mb} MB\nExists: ✓", language="text")
+            try:
+                _emb_df = run_query("SELECT COUNT(*) FROM emails WHERE embedding IS NOT NULL")
+                _emb_n = int(_emb_df.iloc[0, 0]) if not _emb_df.empty else 0
+                st.code(f"Embeddings: {_emb_n:,} / 51,964", language="text")
+            except Exception as _e:
+                st.code(f"Embedding check failed:\n{_e}", language="text")
+        else:
+            st.code(f"Path: {DB_LOCAL}\nNot found ✗", language="text")
+
+    if st.button("캐시 초기화 + DB 재다운로드", use_container_width=True):
         st.cache_data.clear()
         st.cache_resource.clear()
         DB_LOCAL.unlink(missing_ok=True)
+        _DB_TMP.unlink(missing_ok=True)
         st.rerun()
 
 
