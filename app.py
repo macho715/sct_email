@@ -12,7 +12,7 @@ from pathlib import Path
 
 # ── DB 설정 ─────────────────────────────────────────────────────────
 DB_URL   = "https://github.com/macho715/sct_email/releases/download/v2.0/hvdc_mail.duckdb"
-DB_LOCAL = Path("/tmp/hvdc_mail.duckdb")
+DB_LOCAL = Path("/tmp/hvdc_mail_v2.duckdb")
 
 # ── 브랜드 색상 (Samsung C&T Navy) ──────────────────────────────────
 _SEQ = [
