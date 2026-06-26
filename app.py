@@ -1,19 +1,20 @@
 """
-HVDC Email Search — Streamlit + DuckDB
+HVDC Email Search — Streamlit + DuckDB  v2.0
+Features: BM25 Search | Gemini AI Summary | Case Thread | Network Graph | Anomaly Alerts | Semantic Search
 """
-import os
 import requests
 import duckdb
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from pathlib import Path
 
-# ── DB 다운로드 설정 ─────────────────────────────────────────────
+# ── DB 설정 ─────────────────────────────────────────────────────────
 DB_URL   = "https://github.com/macho715/sct_email/releases/download/v1.0/hvdc_mail.duckdb"
 DB_LOCAL = Path("/tmp/hvdc_mail.duckdb")
 
-# ── 브랜드 색상 (Samsung C&T Navy) ───────────────────────────────────
+# ── 브랜드 색상 (Samsung C&T Navy) ──────────────────────────────────
 _SEQ = [
     [0.0, "#EBF5FB"], [0.25, "#AED6F1"],
     [0.5,  "#5DADE2"], [0.75, "#2471A3"],
@@ -34,7 +35,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── 비밀번호 보호 ─────────────────────────────────────────────────
+# ── 비밀번호 보호 ─────────────────────────────────────────────────────
 _PASSWORD = st.secrets.get("password", "")
 if _PASSWORD:
     _input_pwd = st.text_input("🔒 비밀번호를 입력하세요", type="password")
@@ -68,7 +69,7 @@ div[data-testid="stAlert"] { border-radius: 8px; }
 """, unsafe_allow_html=True)
 
 
-# ── DB 다운로드 + 연결 ────────────────────────────────────────────
+# ── DB 다운로드 + 연결 ─────────────────────────────────────────────
 @st.cache_resource
 def get_con():
     if not DB_LOCAL.exists():
@@ -91,6 +92,10 @@ def get_con():
         con.execute("LOAD fts;")
     except Exception:
         pass
+    try:
+        con.execute("LOAD vss;")
+    except Exception:
+        pass
     return con
 
 
@@ -106,7 +111,6 @@ def run_query(sql: str, params=None) -> pd.DataFrame:
 
 
 def _clean_month(series: pd.Series) -> pd.Series:
-    """Excel numeric month 값 정규화: '202501.0' → '202501'"""
     return series.astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
 
 
@@ -133,23 +137,115 @@ def get_total_emails() -> int:
     return int(df.iloc[0, 0]) if not df.empty else 0
 
 
+# ── Feature 5: 이상 탐지 ─────────────────────────────────────────
+@st.cache_data(ttl=3600)
+def get_anomaly_alerts() -> pd.DataFrame:
+    return run_query("""
+        WITH weekly AS (
+            SELECT company_name,
+                   COUNT(*) FILTER (
+                       WHERE TRY_CAST(deliverytime AS DATE) >= CURRENT_DATE - INTERVAL '7 days'
+                   ) AS recent,
+                   COUNT(*) FILTER (
+                       WHERE TRY_CAST(deliverytime AS DATE) >= CURRENT_DATE - INTERVAL '35 days'
+                         AND TRY_CAST(deliverytime AS DATE) <  CURRENT_DATE - INTERVAL '7 days'
+                   ) / 4.0 AS avg4w
+            FROM emails
+            WHERE company_name IS NOT NULL
+            GROUP BY company_name
+        )
+        SELECT company_name, recent, ROUND(avg4w, 1) AS avg4w
+        FROM weekly
+        WHERE (avg4w > 3 AND recent < avg4w * 0.3)
+           OR (recent > avg4w * 3 AND avg4w > 3)
+        ORDER BY ABS(recent - avg4w) DESC
+        LIMIT 5
+    """)
+
+
+# ── Feature 1: Gemini 요약 ────────────────────────────────────────
+@st.cache_data(ttl=1800, show_spinner=False)
+def summarize_with_gemini(subject: str, body: str, api_key: str) -> str:
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        prompt = f"""다음 HVDC 프로젝트 이메일을 한국어로 요약하세요.
+형식:
+• 목적: (1줄)
+• 핵심 정보: (수치·날짜·자재명 포함, 최대 3줄)
+• 액션 아이템: (☐ 형식, 없으면 "없음")
+
+제목: {subject}
+본문:
+{str(body or '')[:3000]}"""
+        resp = model.generate_content(prompt)
+        return resp.text
+    except Exception as e:
+        return f"오류: {e}"
+
+
+# ── Feature 2: 시맨틱 검색 (text-embedding-004) ──────────────────
+def get_query_embedding(query: str, api_key: str):
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        result = genai.embed_content(
+            model="models/text-embedding-004",
+            content=query,
+            task_type="RETRIEVAL_QUERY",
+        )
+        return result["embedding"]
+    except Exception as e:
+        st.error(f"임베딩 오류: {e}")
+        return None
+
+
+def has_embeddings() -> bool:
+    try:
+        df = run_query(
+            "SELECT COUNT(*) FROM information_schema.columns "
+            "WHERE table_name='emails' AND column_name='embedding'"
+        )
+        if df.empty or int(df.iloc[0, 0]) == 0:
+            return False
+        cnt = run_query("SELECT COUNT(*) FROM emails WHERE embedding IS NOT NULL")
+        return not cnt.empty and int(cnt.iloc[0, 0]) > 0
+    except Exception:
+        return False
+
+
 # ── 헤더 ─────────────────────────────────────────────────────────
 st.title("✉ HVDC Email Search")
-st.caption("OUTLOOK HVDC 전체 이메일 데이터 — DuckDB FTS  ·  Samsung C&T / ADNOC")
+st.caption("OUTLOOK HVDC 전체 이메일 데이터 — DuckDB FTS · Gemini AI · Samsung C&T / ADNOC")
 
 months, sites, stages = load_filter_options()
 
-
-# ── 사이드바 필터 ──────────────────────────────────────────────────
+# ── 첨부파일 폴더 링크 ────────────────────────────────────────────
 DRIVE_FOLDERS = [
-    ("📁 첨부파일 폴더 1 (Apr 2026 초)", "https://drive.google.com/drive/folders/1nGE7Ldq8aC0ut8ZuiA8aCUa77f362DxK"),
+    ("📁 첨부파일 폴더 1 (Apr 2026 초)",  "https://drive.google.com/drive/folders/1nGE7Ldq8aC0ut8ZuiA8aCUa77f362DxK"),
     ("📁 첨부파일 폴더 2 (Apr-May 2026)", "https://drive.google.com/drive/folders/1FwcHBvKqy12CqHMPcEOp09y0J8stLZZ2"),
-    ("📁 첨부파일 폴더 3 (May 2026)", "https://drive.google.com/drive/folders/1gmpdc7MUeWXv0T5mitUemF2EKzcCRSDH"),
-    ("📁 첨부파일 폴더 4 (Jun 2026 초)", "https://drive.google.com/drive/folders/1Th_BvMreMVvGdfrQTzp5gUDpKi0f1I63"),
-    ("📁 첨부파일 폴더 5 (Jun 2026 최신)", "https://drive.google.com/drive/folders/1btH18NykL9wDKKuJZZBTSUGCsYkXcaxm"),
+    ("📁 첨부파일 폴더 3 (May 2026)",     "https://drive.google.com/drive/folders/1gmpdc7MUeWXv0T5mitUemF2EKzcCRSDH"),
+    ("📁 첨부파일 폴더 4 (Jun 2026 초)",  "https://drive.google.com/drive/folders/1Th_BvMreMVvGdfrQTzp5gUDpKi0f1I63"),
+    ("📁 첨부파일 폴더 5 (Jun 2026 최신)","https://drive.google.com/drive/folders/1btH18NykL9wDKKuJZZBTSUGCsYkXcaxm"),
 ]
 
+# ── 사이드바 ────────────────────────────────────────────────────────
 with st.sidebar:
+    # Feature 5: 이상 탐지 알림
+    alert_df = get_anomaly_alerts()
+    if not alert_df.empty:
+        st.subheader("⚠️ 이상 탐지 알림")
+        for _, row in alert_df.iterrows():
+            company = row["company_name"]
+            recent  = int(row["recent"])
+            avg4w   = float(row["avg4w"])
+            if avg4w > 0 and recent > avg4w * 3:
+                st.error(f"🔺 **{company}** — 최근 7일 {recent}건 (평균 {avg4w}건, **{recent/avg4w:.1f}배** 급증)")
+            else:
+                st.warning(f"🔻 **{company}** — 최근 7일 {recent}건 (평균 {avg4w}건, 급감)")
+        st.divider()
+
     st.header("필터")
 
     query_text = st.text_input(
@@ -163,23 +259,17 @@ with st.sidebar:
     sel_stages = st.multiselect("Stage", stages)
 
     with st.expander("고급 필터"):
-        sender_filter = st.text_input(
-            "발신자 이메일 포함", placeholder="@dsv.com"
-        )
-        case_filter = st.text_input(
-            "HVDC Case 번호", placeholder="HVDC-ADOPT-SEI-0008"
-        )
+        sender_filter = st.text_input("발신자 이메일 포함", placeholder="@dsv.com")
+        case_filter   = st.text_input("HVDC Case 번호", placeholder="HVDC-ADOPT-SEI-0008")
 
     max_rows = st.slider("최대 결과 수", 50, 2000, 200, 50)
 
     st.divider()
-
     st.markdown("**📎 PDF 첨부파일 폴더**")
     for _label, _url in DRIVE_FOLDERS:
         st.markdown(f"[{_label}]({_url})")
 
     st.divider()
-
     if st.button("캐시 초기화", use_container_width=True):
         st.cache_data.clear()
         st.cache_resource.clear()
@@ -187,12 +277,12 @@ with st.sidebar:
         st.rerun()
 
 
-# ── 탭 ──────────────────────────────────────────────────────────
-tab_search, tab_analytics = st.tabs(["검색", "분석"])
+# ── 탭 (3개) ─────────────────────────────────────────────────────
+tab_search, tab_analytics, tab_semantic = st.tabs(["🔍 검색", "📊 분석", "🤖 시맨틱검색"])
 
 
 # ════════════════════════════════════════════════════════════════
-# TAB 1 — 검색
+# TAB 1 — 검색 + AI 요약 + Case 스레드
 # ════════════════════════════════════════════════════════════════
 with tab_search:
 
@@ -273,7 +363,7 @@ with tab_search:
         else:
             st.info("왼쪽 사이드바에서 키워드 또는 필터를 입력하면 이메일을 검색합니다.")
     else:
-        # linkkey → Google Drive search URL 변환
+        # linkkey → Google Drive search URL
         df_show = df.copy()
         if "linkkey" in df_show.columns:
             df_show["pdf_link"] = df_show["linkkey"].apply(
@@ -288,10 +378,10 @@ with tab_search:
             df_show,
             use_container_width=True,
             column_config={
-                "subject":      st.column_config.TextColumn("제목",         width=280),
-                "senderemail":  st.column_config.TextColumn("발신자",        width=180),
-                "deliverytime": st.column_config.TextColumn("수신일시",      width=140),
-                "hvdc_cases":   st.column_config.TextColumn("HVDC Cases",   width=170),
+                "subject":      st.column_config.TextColumn("제목",       width=280),
+                "senderemail":  st.column_config.TextColumn("발신자",     width=180),
+                "deliverytime": st.column_config.TextColumn("수신일시",   width=140),
+                "hvdc_cases":   st.column_config.TextColumn("HVDC Cases", width=170),
                 "bm25_score":   st.column_config.NumberColumn("관련도", format="%.3f"),
                 "pdf_link":     st.column_config.LinkColumn("📄 PDF", display_text="열기", width=70),
             },
@@ -312,7 +402,7 @@ with tab_search:
         if row_no:
             body_df = run_query(
                 "SELECT subject, sendername, senderemail, deliverytime, "
-                "recipientto, plaintextbody, linkkey FROM emails WHERE no = ?",
+                "recipientto, plaintextbody, linkkey, primary_case FROM emails WHERE no = ?",
                 [str(row_no)],
             )
             if not body_df.empty:
@@ -324,6 +414,7 @@ with tab_search:
                 col_b.markdown(f"**수신자**  \n{r['recipientto']}")
                 st.text_area("본문", value=r["plaintextbody"] or "(본문 없음)", height=380)
 
+                # PDF 링크
                 lk = r.get("linkkey") if hasattr(r, "get") else r["linkkey"]
                 if lk and str(lk).strip() not in ("", "None", "nan"):
                     pdf_url = f"https://drive.google.com/drive/search?q={lk}"
@@ -332,6 +423,52 @@ with tab_search:
                     st.markdown("📎 **첨부 PDF 폴더** (날짜별로 분할 저장):")
                     for _label, _url in DRIVE_FOLDERS:
                         st.markdown(f"- [{_label}]({_url})")
+
+                # Feature 1: Gemini AI 요약
+                google_api_key = st.secrets.get("google_api_key", "")
+                if google_api_key:
+                    if st.button("🤖 AI 요약 (Gemini)", key=f"gemini_{row_no}"):
+                        with st.spinner("Gemini 분석 중..."):
+                            summary = summarize_with_gemini(
+                                str(r["subject"] or ""),
+                                str(r["plaintextbody"] or ""),
+                                google_api_key,
+                            )
+                        st.info(summary)
+                else:
+                    st.caption("💡 Gemini AI 요약을 사용하려면 Streamlit Secrets에 `google_api_key`를 추가하세요.")
+
+                # Feature 3: Case 스레드 타임라인
+                primary_case_val = r.get("primary_case") if hasattr(r, "get") else r["primary_case"]
+                if primary_case_val and str(primary_case_val).strip() not in ("", "None", "nan"):
+                    with st.expander(f"📋 케이스 스레드: {primary_case_val}"):
+                        thread_df = run_query(
+                            "SELECT no, deliverytime, subject, sendername FROM emails "
+                            "WHERE primary_case = ? ORDER BY deliverytime",
+                            [str(primary_case_val)],
+                        )
+                        if not thread_df.empty:
+                            st.caption(f"이 케이스 관련 이메일 총 **{len(thread_df)}건**")
+                            fig_thread = px.scatter(
+                                thread_df,
+                                x="deliverytime",
+                                y="sendername",
+                                hover_data=["subject", "no"],
+                                title=f"스레드 타임라인 — {primary_case_val}",
+                                color="sendername",
+                            )
+                            fig_thread.update_layout(**_CHART, height=300)
+                            fig_thread.update_traces(marker=dict(size=10))
+                            st.plotly_chart(fig_thread, use_container_width=True)
+                            st.dataframe(
+                                thread_df[["no", "deliverytime", "sendername", "subject"]],
+                                use_container_width=True,
+                                hide_index=True,
+                                height=200,
+                                column_config={
+                                    "subject": st.column_config.TextColumn("제목", width=300),
+                                },
+                            )
 
         st.divider()
         st.download_button(
@@ -343,7 +480,7 @@ with tab_search:
 
 
 # ════════════════════════════════════════════════════════════════
-# TAB 2 — 분석
+# TAB 2 — 분석 (기존 + Feature 4: 네트워크 그래프)
 # ════════════════════════════════════════════════════════════════
 with tab_analytics:
 
@@ -390,43 +527,79 @@ with tab_analytics:
             df["month"] = _clean_month(df["month"])
         return df
 
-    # ── 월별 수신량 ───────────────────────────────────────────────
-    st.subheader("월별 이메일 수신량")
-    vol_df = load_monthly_volume()
+    @st.cache_data(ttl=3600)
+    def load_network_data():
+        return run_query("""
+            SELECT
+                COALESCE(company_name, SPLIT_PART(senderemail, '@', 2)) AS source,
+                COALESCE(
+                    NULLIF(SPLIT_PART(SPLIT_PART(recipientto, '@', 2), '.', 1), ''),
+                    'Unknown'
+                ) AS target,
+                COUNT(*) AS weight
+            FROM emails
+            WHERE company_name IS NOT NULL
+              AND recipientto IS NOT NULL
+              AND recipientto NOT LIKE '%None%'
+            GROUP BY 1, 2
+            HAVING COUNT(*) >= 5
+            ORDER BY weight DESC
+            LIMIT 150
+        """)
 
-    if vol_df.empty:
-        st.info("월별 데이터가 없습니다. DB를 다시 빌드해보세요.")
-    else:
-        fig_vol = px.bar(
-            vol_df, x="month", y="email_count",
-            labels={"month": "연월", "email_count": "이메일 수"},
-            color="email_count",
-            color_continuous_scale=_SEQ,
-        )
-        fig_vol.update_layout(
-            **_CHART,
-            showlegend=False,
-            coloraxis_showscale=False,
-            height=340,
-            xaxis=dict(
-                title="연월",
-                tickangle=-45,
-                type="category",
-                tickfont=dict(size=11),
-            ),
-            yaxis=dict(title="이메일 수", gridcolor="#E5E7EB"),
-        )
-        fig_vol.update_traces(
-            hovertemplate="<b>%{x}</b><br>이메일 수: %{y:,}<extra></extra>",
-        )
-        st.plotly_chart(fig_vol, use_container_width=True)
+    # 서브탭
+    sub_vol, sub_heat, sub_network = st.tabs(["📈 월별 추이", "🗺️ Site × 월 히트맵", "🕸️ 네트워크"])
 
-    st.divider()
+    with sub_vol:
+        st.subheader("월별 이메일 수신량")
+        vol_df = load_monthly_volume()
+        if vol_df.empty:
+            st.info("월별 데이터가 없습니다.")
+        else:
+            fig_vol = px.bar(
+                vol_df, x="month", y="email_count",
+                labels={"month": "연월", "email_count": "이메일 수"},
+                color="email_count",
+                color_continuous_scale=_SEQ,
+            )
+            fig_vol.update_layout(
+                **_CHART,
+                showlegend=False,
+                coloraxis_showscale=False,
+                height=340,
+                xaxis=dict(title="연월", tickangle=-45, type="category", tickfont=dict(size=11)),
+                yaxis=dict(title="이메일 수", gridcolor="#E5E7EB"),
+            )
+            fig_vol.update_traces(hovertemplate="<b>%{x}</b><br>이메일 수: %{y:,}<extra></extra>")
+            st.plotly_chart(fig_vol, use_container_width=True)
 
-    col_heat, col_top = st.columns([3, 2])
+            col_heat2, col_top = st.columns([3, 2])
+            with col_top:
+                st.subheader("Top 20 발신 그룹")
+                top_df = load_top_senders(20)
+                if not top_df.empty:
+                    fig_top = px.bar(
+                        top_df, x="email_count", y="sender_group",
+                        orientation="h",
+                        labels={"email_count": "이메일 수", "sender_group": ""},
+                        color="email_count",
+                        color_continuous_scale=_SEQ,
+                    )
+                    fig_top.update_layout(
+                        **_CHART,
+                        showlegend=False,
+                        coloraxis_showscale=False,
+                        yaxis=dict(categoryorder="total ascending"),
+                        xaxis=dict(title="이메일 수", gridcolor="#E5E7EB"),
+                        height=400,
+                    )
+                    fig_top.update_traces(hovertemplate="<b>%{y}</b><br>이메일 수: %{x:,}<extra></extra>")
+                    st.plotly_chart(fig_top, use_container_width=True)
 
-    # ── Site × 월 히트맵 ──────────────────────────────────────────
-    with col_heat:
+            with st.expander("월별 원시 데이터"):
+                st.dataframe(vol_df, use_container_width=True, hide_index=True)
+
+    with sub_heat:
         st.subheader("Site × 월 히트맵")
         heat_df = load_heatmap()
         if heat_df.empty:
@@ -447,47 +620,181 @@ with tab_analytics:
             fig_heat.update_layout(
                 **_CHART,
                 height=400,
-                xaxis=dict(
-                    type="category",
-                    tickangle=-45,
-                    tickfont=dict(size=10),
-                ),
+                xaxis=dict(type="category", tickangle=-45, tickfont=dict(size=10)),
             )
-            fig_heat.update_traces(
-                hovertemplate="<b>%{y}</b> · %{x}<br>이메일 수: %{z:,}<extra></extra>",
-            )
+            fig_heat.update_traces(hovertemplate="<b>%{y}</b> · %{x}<br>이메일 수: %{z:,}<extra></extra>")
             st.plotly_chart(fig_heat, use_container_width=True)
 
-    # ── Top 20 발신 그룹 ──────────────────────────────────────────
-    with col_top:
-        st.subheader("Top 20 발신 그룹")
-        top_df = load_top_senders(20)
-        if top_df.empty:
-            st.info("발신자 데이터가 없습니다.")
-        else:
-            fig_top = px.bar(
-                top_df, x="email_count", y="sender_group",
-                orientation="h",
-                labels={"email_count": "이메일 수", "sender_group": ""},
-                color="email_count",
-                color_continuous_scale=_SEQ,
-            )
-            fig_top.update_layout(
-                **_CHART,
-                showlegend=False,
-                coloraxis_showscale=False,
-                yaxis=dict(categoryorder="total ascending"),
-                xaxis=dict(title="이메일 수", gridcolor="#E5E7EB"),
-                height=400,
-            )
-            fig_top.update_traces(
-                hovertemplate="<b>%{y}</b><br>이메일 수: %{x:,}<extra></extra>",
-            )
-            st.plotly_chart(fig_top, use_container_width=True)
+    # Feature 4: 네트워크 그래프
+    with sub_network:
+        st.subheader("🕸️ 회사 이메일 네트워크")
+        st.caption("발신 회사 → 수신 도메인 흐름 (5건 이상만 표시)")
 
-    st.divider()
-    with st.expander("월별 원시 데이터"):
-        if not vol_df.empty:
-            st.dataframe(vol_df, use_container_width=True, hide_index=True)
+        net_df = load_network_data()
+        if net_df.empty:
+            st.info("네트워크 데이터가 없습니다.")
         else:
-            st.info("데이터 없음")
+            try:
+                import networkx as nx
+
+                G = nx.from_pandas_edgelist(
+                    net_df, source="source", target="target",
+                    edge_attr="weight", create_using=nx.DiGraph()
+                )
+                pos = nx.spring_layout(G, seed=42, k=2.0)
+
+                edge_traces = []
+                for u, v, data in G.edges(data=True):
+                    x0, y0 = pos[u]
+                    x1, y1 = pos[v]
+                    w = data.get("weight", 1)
+                    edge_traces.append(go.Scatter(
+                        x=[x0, x1, None], y=[y0, y1, None],
+                        mode="lines",
+                        line=dict(width=min(w / 20, 5), color="#AED6F1"),
+                        hoverinfo="none",
+                        showlegend=False,
+                    ))
+
+                node_x = [pos[n][0] for n in G.nodes()]
+                node_y = [pos[n][1] for n in G.nodes()]
+                node_text = list(G.nodes())
+                node_size = [
+                    max(10, min(40, G.degree(n) * 4)) for n in G.nodes()
+                ]
+                node_trace = go.Scatter(
+                    x=node_x, y=node_y,
+                    mode="markers+text",
+                    text=node_text,
+                    textposition="top center",
+                    textfont=dict(size=9),
+                    marker=dict(
+                        size=node_size,
+                        color=[G.degree(n) for n in G.nodes()],
+                        colorscale=[[0, "#AED6F1"], [1, "#1F5276"]],
+                        showscale=True,
+                        colorbar=dict(title="연결 수", thickness=12),
+                        line=dict(width=1, color="#FFFFFF"),
+                    ),
+                    hovertemplate="<b>%{text}</b><br>연결 수: %{marker.size}<extra></extra>",
+                )
+
+                fig_net = go.Figure(data=edge_traces + [node_trace])
+                fig_net.update_layout(
+                    **_CHART,
+                    height=600,
+                    showlegend=False,
+                    xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                    yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                )
+                st.plotly_chart(fig_net, use_container_width=True)
+
+            except ImportError:
+                # networkx 미설치 시 간단한 chord-style bar 대체
+                st.info("networkx 미설치 — 상위 연결 현황으로 대체 표시합니다. `pip install networkx`")
+                top_net = net_df.sort_values("weight", ascending=False).head(30)
+                top_net["link"] = top_net["source"] + " → " + top_net["target"]
+                fig_fallback = px.bar(
+                    top_net, x="weight", y="link", orientation="h",
+                    labels={"weight": "이메일 수", "link": ""},
+                    color="weight", color_continuous_scale=_SEQ,
+                )
+                fig_fallback.update_layout(**_CHART, height=600,
+                    yaxis=dict(categoryorder="total ascending"))
+                st.plotly_chart(fig_fallback, use_container_width=True)
+
+            st.dataframe(
+                net_df.sort_values("weight", ascending=False).head(30),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "source": st.column_config.TextColumn("발신 회사", width=200),
+                    "target": st.column_config.TextColumn("수신 도메인", width=200),
+                    "weight": st.column_config.NumberColumn("이메일 수", format="%d"),
+                },
+            )
+
+
+# ════════════════════════════════════════════════════════════════
+# TAB 3 — 시맨틱 검색 (Feature 2 + 6)
+# ════════════════════════════════════════════════════════════════
+with tab_semantic:
+    st.subheader("🤖 시맨틱 검색 (Google text-embedding-004)")
+
+    google_api_key = st.secrets.get("google_api_key", "")
+
+    if not google_api_key:
+        st.warning(
+            "Gemini API Key가 없습니다. Streamlit Secrets에 `google_api_key`를 추가하면 "
+            "시맨틱 검색을 사용할 수 있습니다."
+        )
+    else:
+        _has_emb = has_embeddings()
+        if not _has_emb:
+            st.info(
+                "임베딩 데이터가 없습니다. `build_db.py`를 실행하여 DB를 재빌드하세요:\n\n"
+                "```bash\n"
+                "GOOGLE_API_KEY=AIza... python build_db.py\n"
+                "```\n\n"
+                "완료 후 GitHub Release에 v2.0으로 재업로드하고 `DB_URL`을 업데이트하세요."
+            )
+        else:
+            sem_query = st.text_input(
+                "의미 기반 검색어",
+                placeholder="예: transformer installation schedule delay",
+                help="정확한 키워드 대신 의미로 검색합니다",
+            )
+            sem_top_k = st.slider("결과 수", 10, 100, 30, 10)
+            use_hybrid = st.checkbox("BM25 + 시맨틱 Hybrid (권장)", value=True)
+
+            if sem_query and st.button("🔍 시맨틱 검색 실행"):
+                with st.spinner("임베딩 생성 중..."):
+                    qvec = get_query_embedding(sem_query, google_api_key)
+
+                if qvec:
+                    with st.spinner("벡터 검색 중..."):
+                        vec_df = run_query(
+                            f"SELECT no, subject, sendername, deliverytime, company_name, "
+                            f"array_cosine_similarity(embedding, ?::FLOAT[768]) AS cosine_score "
+                            f"FROM emails "
+                            f"WHERE embedding IS NOT NULL "
+                            f"ORDER BY cosine_score DESC LIMIT {sem_top_k * 2}",
+                            [qvec],
+                        )
+
+                    if use_hybrid and sem_query:
+                        bm25_df = run_query(
+                            f"SELECT no, fts_main_emails.match_bm25(no, ?) AS bm25_score "
+                            f"FROM emails ORDER BY bm25_score DESC LIMIT {sem_top_k * 2}",
+                            [sem_query],
+                        )
+                        if not bm25_df.empty and not vec_df.empty:
+                            bm25_max = float(bm25_df["bm25_score"].max() or 1)
+                            bm25_df["bm25_norm"] = bm25_df["bm25_score"] / bm25_max
+                            merged = vec_df.merge(bm25_df[["no", "bm25_norm"]], on="no", how="left").fillna(0)
+                            merged["hybrid_score"] = (
+                                0.7 * merged["cosine_score"] + 0.3 * merged["bm25_norm"]
+                            )
+                            result_df = merged.sort_values("hybrid_score", ascending=False).head(sem_top_k)
+                            score_col_name = "hybrid_score"
+                        else:
+                            result_df = vec_df.head(sem_top_k)
+                            score_col_name = "cosine_score"
+                    else:
+                        result_df = vec_df.head(sem_top_k)
+                        score_col_name = "cosine_score"
+
+                    st.success(f"검색 완료 — {len(result_df)}건")
+                    st.dataframe(
+                        result_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        height=500,
+                        column_config={
+                            "subject":       st.column_config.TextColumn("제목", width=300),
+                            "sendername":    st.column_config.TextColumn("발신자", width=150),
+                            "deliverytime":  st.column_config.TextColumn("수신일시", width=140),
+                            "company_name":  st.column_config.TextColumn("회사", width=150),
+                            score_col_name:  st.column_config.NumberColumn("유사도", format="%.4f"),
+                        },
+                    )
