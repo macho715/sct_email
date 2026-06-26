@@ -141,7 +141,13 @@ months, sites, stages = load_filter_options()
 
 
 # ── 사이드바 필터 ──────────────────────────────────────────────────
-DRIVE_FOLDER = "https://drive.google.com/drive/folders/1FwcHBvKqy12CqHMPcEOp09y0J8stLZZ2"
+DRIVE_FOLDERS = [
+    ("📁 첨부파일 폴더 1 (Apr 2026 초)", "https://drive.google.com/drive/folders/1nGE7Ldq8aC0ut8ZuiA8aCUa77f362DxK"),
+    ("📁 첨부파일 폴더 2 (Apr-May 2026)", "https://drive.google.com/drive/folders/1FwcHBvKqy12CqHMPcEOp09y0J8stLZZ2"),
+    ("📁 첨부파일 폴더 3 (May 2026)", "https://drive.google.com/drive/folders/1gmpdc7MUeWXv0T5mitUemF2EKzcCRSDH"),
+    ("📁 첨부파일 폴더 4 (Jun 2026 초)", "https://drive.google.com/drive/folders/1Th_BvMreMVvGdfrQTzp5gUDpKi0f1I63"),
+    ("📁 첨부파일 폴더 5 (Jun 2026 최신)", "https://drive.google.com/drive/folders/1btH18NykL9wDKKuJZZBTSUGCsYkXcaxm"),
+]
 
 with st.sidebar:
     st.header("필터")
@@ -168,9 +174,9 @@ with st.sidebar:
 
     st.divider()
 
-    st.markdown(
-        f"📎 [**PDF 첨부파일 폴더 열기**]({DRIVE_FOLDER})",
-    )
+    st.markdown("**📎 PDF 첨부파일 폴더**")
+    for _label, _url in DRIVE_FOLDERS:
+        st.markdown(f"[{_label}]({_url})")
 
     st.divider()
 
@@ -306,9 +312,9 @@ with tab_search:
                 col_b.markdown(f"**수신자**  \n{r['recipientto']}")
                 st.text_area("본문", value=r["plaintextbody"] or "(본문 없음)", height=380)
 
-                st.markdown(
-                    f"📎 이 메일의 첨부 PDF는 [**Google Drive 폴더**]({DRIVE_FOLDER})에서 확인하세요.",
-                )
+                st.markdown("📎 **첨부 PDF 폴더** (날짜별로 분할 저장):")
+                for _label, _url in DRIVE_FOLDERS:
+                    st.markdown(f"- [{_label}]({_url})")
 
         st.divider()
         st.download_button(
