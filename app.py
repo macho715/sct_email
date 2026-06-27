@@ -1,6 +1,6 @@
 """
 HVDC Email Search — Streamlit + DuckDB  v2.0
-Features: BM25 Search | Gemini AI Summary | Case Thread | Network Graph | Anomaly Alerts | Semantic Search
+Features: BM25 Search | Gemini AI Summary | Case Thread | Network Graph | Semantic Search
 """
 import requests
 import duckdb
@@ -32,6 +32,238 @@ _PIE_COLORS = [
     "#F4D03F", "#E67E22", "#A569BD", "#7F8C8D",
 ]
 
+# ── 다국어 텍스트 ─────────────────────────────────────────────────────
+_T = {
+    "ko": {
+        # page
+        "caption": "OUTLOOK HVDC 전체 이메일 데이터 — DuckDB FTS · Gemini AI · Samsung C&T / ADNOC",
+        # sidebar
+        "label_search_filter": "검색 및 필터",
+        "label_pdf_folders": "PDF 첨부파일 폴더",
+        "kw_search": "키워드 검색 (FTS)",
+        "kw_placeholder": "예: DSV, cable, 5000684244",
+        "kw_help": "Subject · SenderName · Body · HVDC Cases 전체 텍스트 검색",
+        "adv_filter": "고급 필터",
+        "sender_filter_label": "발신자 이메일 포함",
+        "sender_filter_ph": "@dsv.com",
+        "case_filter_label": "HVDC Case 번호",
+        "case_filter_ph": "HVDC-ADOPT-SEI-0008",
+        "max_rows": "최대 결과 수",
+        "db_diag": "DB 진단",
+        "confirm_reset": "DB 재다운로드를 확인합니다 (기존 캐시가 모두 삭제됩니다)",
+        "btn_reset": "캐시 초기화 + DB 재다운로드",
+        # tabs
+        "tab_search": "검색",
+        "tab_analytics": "분석",
+        "tab_semantic": "시맨틱 검색",
+        # metrics
+        "metric_match": "매칭 건수",
+        "metric_match_help": "현재 필터 조건과 일치하는 이메일 수",
+        "metric_shown": "표시 결과",
+        "metric_shown_help": "최대",
+        "metric_total": "DB 총 이메일",
+        "metric_total_help": "전체 데이터베이스 보유량",
+        # search tab
+        "searching": "조회 중...",
+        "no_results_filter": (
+            "검색 결과가 없습니다.\n\n"
+            "- 키워드 철자를 확인하거나 더 짧은 단어로 검색해보세요.\n"
+            "- 필터 조건을 줄이면 더 많은 결과가 나올 수 있습니다."
+        ),
+        "no_results_empty": "왼쪽 사이드바에서 키워드 또는 필터를 입력하면 이메일을 검색합니다.",
+        "col_subject": "제목",
+        "col_sender": "발신자",
+        "col_received": "수신일시",
+        "col_recipients": "수신자",
+        "col_body": "본문",
+        "col_cases": "HVDC Cases",
+        "col_score": "관련도",
+        "col_pdf": "PDF",
+        "email_detail": "본문 보기",
+        "select_email": "메일 선택 (no 번호)",
+        "btn_pdf": "첨부 PDF 열기 (Google Drive)",
+        "pdf_folder_alt": "첨부 PDF 폴더 (날짜별로 분할 저장):",
+        "btn_ai": "AI 요약 (Gemini)",
+        "ai_spinner": "Gemini 분석 중...",
+        "ai_no_key": "Gemini AI 요약을 사용하려면 Streamlit Secrets에 `google_api_key`를 추가하세요.",
+        "case_thread": "케이스 스레드",
+        "case_thread_count": "이 케이스 관련 이메일 총",
+        "thread_timeline": "스레드 타임라인",
+        "csv_download": "결과 CSV 다운로드",
+        # analytics tab
+        "metric_vol": "분석 이메일",
+        "metric_peak": "피크 월",
+        "analytics_csv": "Analytics CSV 다운로드",
+        "subtab_vol": "📈 월별 추이",
+        "subtab_heat": "🗺️ Site × 월 히트맵",
+        "subtab_dist": "📊 Site / Stage 분포",
+        "subtab_net": "🕸️ 네트워크",
+        "vol_title": "월별 이메일 수신량",
+        "vol_no_data": "월별 데이터가 없습니다.",
+        "top_senders": "Top 20 발신 그룹",
+        "raw_data": "월별 원시 데이터",
+        "heat_title": "Site × 월 히트맵",
+        "heat_no_data": "Site 또는 월 데이터가 없습니다.",
+        "dist_title": "Site / Stage 분포",
+        "site_no_data": "Site 데이터가 없습니다.",
+        "stage_no_data": "Stage 데이터가 없습니다.",
+        "net_title": "회사 이메일 네트워크",
+        "net_caption": "발신 회사 → 수신 도메인 흐름 (5건 이상만 표시)",
+        "net_no_data": "네트워크 데이터가 없습니다.",
+        "net_fallback": "networkx 미설치 — 상위 연결 현황으로 대체 표시합니다. `pip install networkx`",
+        "col_source": "발신 회사",
+        "col_target": "수신 도메인",
+        "col_weight": "이메일 수",
+        "col_metric": "집계",
+        "col_dim": "항목",
+        "col_count": "이메일 수",
+        # semantic tab
+        "sem_title": "시맨틱 검색 (all-MiniLM-L6-v2, 384 dim)",
+        "sem_no_emb": (
+            "임베딩 데이터가 없습니다. 로컬에서 `build_db.py`를 실행하여 DB를 재빌드하세요:\n\n"
+            "```bash\npython build_db.py\n```\n\n"
+            "완료 후 GitHub Release에 v2.0으로 재업로드하고 `DB_URL`을 업데이트하세요."
+        ),
+        "sem_query_label": "의미 기반 검색어",
+        "sem_query_ph": "예: transformer installation schedule delay",
+        "sem_query_help": "정확한 키워드 대신 의미로 검색합니다",
+        "sem_top_k": "결과 수",
+        "sem_hybrid": "BM25 + 시맨틱 Hybrid (권장)",
+        "sem_run": "시맨틱 검색 실행",
+        "sem_embedding": "임베딩 생성 중...",
+        "sem_searching": "벡터 검색 중...",
+        "sem_no_result": "결과 없음 — 다른 검색어를 시도하거나 Hybrid 모드를 켜세요.",
+        "sem_done": "검색 완료",
+        "col_similarity": "유사도",
+        "col_company": "회사",
+        # axis / hover labels
+        "axis_month": "연월",
+        "axis_email_count": "이메일 수",
+        "axis_sender_group": "발신 그룹",
+        "axis_site": "Site",
+        "axis_link": "연결",
+        "connections": "연결 수",
+        "db_init": "DB 초기화 중...",
+        "db_ok": "DB 준비 완료!",
+        "db_fail": "다운로드 실패",
+        "db_err": "DB 다운로드 실패: ",
+    },
+    "en": {
+        # page
+        "caption": "OUTLOOK HVDC Email Archive — DuckDB FTS · Gemini AI · Samsung C&T / ADNOC",
+        # sidebar
+        "label_search_filter": "Search & Filter",
+        "label_pdf_folders": "PDF Attachment Folders",
+        "kw_search": "Keyword Search (FTS)",
+        "kw_placeholder": "e.g. DSV, cable, 5000684244",
+        "kw_help": "Full-text search across Subject · SenderName · Body · HVDC Cases",
+        "adv_filter": "Advanced Filter",
+        "sender_filter_label": "Sender email contains",
+        "sender_filter_ph": "@dsv.com",
+        "case_filter_label": "HVDC Case No.",
+        "case_filter_ph": "HVDC-ADOPT-SEI-0008",
+        "max_rows": "Max results",
+        "db_diag": "DB Diagnostics",
+        "confirm_reset": "Confirm DB re-download (all cache will be cleared)",
+        "btn_reset": "Clear Cache + Re-download DB",
+        # tabs
+        "tab_search": "Search",
+        "tab_analytics": "Analytics",
+        "tab_semantic": "Semantic Search",
+        # metrics
+        "metric_match": "Matched",
+        "metric_match_help": "Emails matching current filter conditions",
+        "metric_shown": "Shown",
+        "metric_shown_help": "max",
+        "metric_total": "Total Emails",
+        "metric_total_help": "Total records in database",
+        # search tab
+        "searching": "Searching...",
+        "no_results_filter": (
+            "No results found.\n\n"
+            "- Check spelling or try shorter keywords.\n"
+            "- Reduce filter conditions to broaden results."
+        ),
+        "no_results_empty": "Enter a keyword or select filters in the left sidebar to search emails.",
+        "col_subject": "Subject",
+        "col_sender": "Sender",
+        "col_received": "Received",
+        "col_recipients": "Recipients",
+        "col_body": "Body",
+        "col_cases": "HVDC Cases",
+        "col_score": "Relevance",
+        "col_pdf": "PDF",
+        "email_detail": "Email Detail",
+        "select_email": "Select email (no)",
+        "btn_pdf": "Open PDF Attachment (Google Drive)",
+        "pdf_folder_alt": "PDF Attachment Folders (split by date):",
+        "btn_ai": "AI Summary (Gemini)",
+        "ai_spinner": "Analysing with Gemini...",
+        "ai_no_key": "Add `google_api_key` to Streamlit Secrets to enable Gemini AI summaries.",
+        "case_thread": "Case Thread",
+        "case_thread_count": "Total emails in this case",
+        "thread_timeline": "Thread Timeline",
+        "csv_download": "Download Results CSV",
+        # analytics tab
+        "metric_vol": "Total Emails",
+        "metric_peak": "Peak Month",
+        "analytics_csv": "Download Analytics CSV",
+        "subtab_vol": "📈 Monthly Trend",
+        "subtab_heat": "🗺️ Site × Month Heatmap",
+        "subtab_dist": "📊 Site / Stage Distribution",
+        "subtab_net": "🕸️ Network",
+        "vol_title": "Monthly Email Volume",
+        "vol_no_data": "No monthly data available.",
+        "top_senders": "Top 20 Sender Groups",
+        "raw_data": "Monthly Raw Data",
+        "heat_title": "Site × Month Heatmap",
+        "heat_no_data": "No site or monthly data available.",
+        "dist_title": "Site / Stage Distribution",
+        "site_no_data": "No site data available.",
+        "stage_no_data": "No stage data available.",
+        "net_title": "Company Email Network",
+        "net_caption": "Sender company → Recipient domain flow (5+ emails only)",
+        "net_no_data": "No network data available.",
+        "net_fallback": "networkx not installed — showing top connections instead. `pip install networkx`",
+        "col_source": "Sender Company",
+        "col_target": "Recipient Domain",
+        "col_weight": "Email Count",
+        "col_metric": "Metric",
+        "col_dim": "Dimension",
+        "col_count": "Email Count",
+        # semantic tab
+        "sem_title": "Semantic Search (all-MiniLM-L6-v2, 384 dim)",
+        "sem_no_emb": (
+            "No embedding data found. Run `build_db.py` locally to rebuild the DB:\n\n"
+            "```bash\npython build_db.py\n```\n\n"
+            "Then re-upload to GitHub Release as v2.0 and update `DB_URL`."
+        ),
+        "sem_query_label": "Semantic search query",
+        "sem_query_ph": "e.g. transformer installation schedule delay",
+        "sem_query_help": "Search by meaning instead of exact keywords",
+        "sem_top_k": "Results",
+        "sem_hybrid": "BM25 + Semantic Hybrid (recommended)",
+        "sem_run": "Run Semantic Search",
+        "sem_embedding": "Generating embeddings...",
+        "sem_searching": "Vector search in progress...",
+        "sem_no_result": "No results — try different keywords or enable Hybrid mode.",
+        "sem_done": "Search complete",
+        "col_similarity": "Similarity",
+        "col_company": "Company",
+        # axis / hover labels
+        "axis_month": "Month",
+        "axis_email_count": "Email Count",
+        "axis_sender_group": "Sender Group",
+        "axis_site": "Site",
+        "axis_link": "Link",
+        "connections": "Connections",
+        "db_init": "Initialising DB...",
+        "db_ok": "DB ready!",
+        "db_fail": "Download failed",
+        "db_err": "DB download failed: ",
+    },
+}
+
 # ─────────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="HVDC Email Search",
@@ -40,10 +272,14 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ── 언어 상태 초기화 ──────────────────────────────────────────────────
+if "lang" not in st.session_state:
+    st.session_state.lang = "ko"
+
 # ── 비밀번호 보호 ─────────────────────────────────────────────────────
 _PASSWORD = st.secrets.get("password", "")
 if _PASSWORD:
-    _input_pwd = st.text_input("🔒 비밀번호를 입력하세요", type="password")
+    _input_pwd = st.text_input("비밀번호를 입력하세요", type="password")
     if _input_pwd != _PASSWORD:
         st.warning("올바른 비밀번호를 입력해야 대시보드를 사용할 수 있습니다.")
         st.stop()
@@ -109,6 +345,12 @@ div[data-testid="stAlert"] { border-radius: 8px; }
     line-height: 1.6;
     color: #1E293B;
 }
+/* Language toggle */
+.lang-toggle button {
+    font-size: 0.8rem !important;
+    font-weight: 700 !important;
+    padding: 0.25rem 0.5rem !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -149,7 +391,7 @@ def run_query(sql: str, params=None) -> pd.DataFrame:
             return con.execute(sql, params).df()
         return con.execute(sql).df()
     except Exception as e:
-        st.error(f"쿼리 오류: {e}")
+        st.error(f"Query error: {e}")
         return pd.DataFrame()
 
 
@@ -185,32 +427,6 @@ def get_total_emails() -> int:
     return count_emails()
 
 
-# ── Feature 5: 이상 탐지 ─────────────────────────────────────────
-@st.cache_data(ttl=3600)
-def get_anomaly_alerts() -> pd.DataFrame:
-    return run_query("""
-        WITH weekly AS (
-            SELECT company_name,
-                   COUNT(*) FILTER (
-                       WHERE TRY_CAST(deliverytime AS DATE) >= CURRENT_DATE - INTERVAL '7 days'
-                   ) AS recent,
-                   COUNT(*) FILTER (
-                       WHERE TRY_CAST(deliverytime AS DATE) >= CURRENT_DATE - INTERVAL '35 days'
-                         AND TRY_CAST(deliverytime AS DATE) <  CURRENT_DATE - INTERVAL '7 days'
-                   ) / 4.0 AS avg4w
-            FROM emails
-            WHERE company_name IS NOT NULL
-            GROUP BY company_name
-        )
-        SELECT company_name, recent, ROUND(avg4w, 1) AS avg4w
-        FROM weekly
-        WHERE (avg4w > 3 AND recent < avg4w * 0.3)
-           OR (recent > avg4w * 3 AND avg4w > 3)
-        ORDER BY ABS(recent - avg4w) DESC
-        LIMIT 5
-    """)
-
-
 # ── Feature 1: Gemini 요약 ────────────────────────────────────────
 @st.cache_data(ttl=1800, show_spinner=False)
 def summarize_with_gemini(subject: str, body: str, api_key: str) -> str:
@@ -234,8 +450,8 @@ def summarize_with_gemini(subject: str, body: str, api_key: str) -> str:
     except Exception as e:
         msg = str(e)
         if "429" in msg or "RESOURCE_EXHAUSTED" in msg or "spending cap" in msg:
-            return "⚠️ Gemini API 월 지출 한도 초과. https://aistudio.google.com/app/apikey 에서 한도를 높이거나 다음 달에 다시 시도하세요."
-        return f"오류: {e}"
+            return "Gemini API monthly quota exceeded. Visit https://aistudio.google.com/app/apikey to raise the limit or retry next month."
+        return f"Error: {e}"
 
 
 # ── Feature 2: 시맨틱 검색 (sentence-transformers all-MiniLM-L6-v2, 384 dim) ─
@@ -251,7 +467,7 @@ def get_query_embedding(query: str, api_key: str = ""):
         vec = model.encode([query], normalize_embeddings=True)[0].tolist()
         return vec
     except Exception as e:
-        st.error(f"임베딩 오류: {e}")
+        st.error(f"Embedding error: {e}")
         return None
 
 
@@ -269,9 +485,12 @@ def has_embeddings() -> bool:
         return False
 
 
+# ── 언어 단축 참조 (전체 앱에서 사용) ────────────────────────────────
+T = _T[st.session_state.lang]
+
 # ── 헤더 ─────────────────────────────────────────────────────────
 st.title("✉ HVDC Email Search")
-st.caption("OUTLOOK HVDC 전체 이메일 데이터 — DuckDB FTS · Gemini AI · Samsung C&T / ADNOC")
+st.caption(T["caption"])
 
 # ── DB 초기화 (atomic, top-level) ────────────────────────────────
 if _DB_TMP.exists():
@@ -279,7 +498,7 @@ if _DB_TMP.exists():
 
 if not DB_LOCAL.exists():
     _download_error = None
-    with st.status("DB 초기화 중...", expanded=True) as _status:
+    with st.status(T["db_init"], expanded=True) as _status:
         _bar = st.progress(0)
         try:
             with requests.get(DB_URL, stream=True, timeout=(30, 900)) as _r:
@@ -294,13 +513,13 @@ if not DB_LOCAL.exists():
                             _pct = min(int(_downloaded / _total * 100), 100)
                             _bar.progress(_pct, text=f"{_downloaded//1024//1024} MB / {_total//1024//1024} MB")
             _DB_TMP.rename(DB_LOCAL)
-            _status.update(label="✅ DB 준비 완료!", state="complete")
+            _status.update(label=f"✅ {T['db_ok']}", state="complete")
         except Exception as _exc:
             _DB_TMP.unlink(missing_ok=True)
             _download_error = str(_exc)
-            _status.update(label="❌ 다운로드 실패", state="error")
+            _status.update(label=f"❌ {T['db_fail']}", state="error")
     if _download_error:
-        st.error(f"DB 다운로드 실패: {_download_error}")
+        st.error(T["db_err"] + _download_error)
         st.stop()
     else:
         st.rerun()
@@ -309,57 +528,64 @@ months, sites, stages = load_filter_options()
 
 # ── 첨부파일 폴더 링크 ────────────────────────────────────────────
 DRIVE_FOLDERS = [
-    ("📁 첨부파일 폴더 1 (Apr 2026 초)",  "https://drive.google.com/drive/folders/1nGE7Ldq8aC0ut8ZuiA8aCUa77f362DxK"),
-    ("📁 첨부파일 폴더 2 (Apr-May 2026)", "https://drive.google.com/drive/folders/1FwcHBvKqy12CqHMPcEOp09y0J8stLZZ2"),
-    ("📁 첨부파일 폴더 3 (May 2026)",     "https://drive.google.com/drive/folders/1gmpdc7MUeWXv0T5mitUemF2EKzcCRSDH"),
-    ("📁 첨부파일 폴더 4 (Jun 2026 초)",  "https://drive.google.com/drive/folders/1Th_BvMreMVvGdfrQTzp5gUDpKi0f1I63"),
-    ("📁 첨부파일 폴더 5 (Jun 2026 최신)","https://drive.google.com/drive/folders/1btH18NykL9wDKKuJZZBTSUGCsYkXcaxm"),
+    ("Attachment Folder 1 (Apr 2026 early)",  "https://drive.google.com/drive/folders/1nGE7Ldq8aC0ut8ZuiA8aCUa77f362DxK"),
+    ("Attachment Folder 2 (Apr-May 2026)",    "https://drive.google.com/drive/folders/1FwcHBvKqy12CqHMPcEOp09y0J8stLZZ2"),
+    ("Attachment Folder 3 (May 2026)",        "https://drive.google.com/drive/folders/1gmpdc7MUeWXv0T5mitUemF2EKzcCRSDH"),
+    ("Attachment Folder 4 (Jun 2026 early)",  "https://drive.google.com/drive/folders/1Th_BvMreMVvGdfrQTzp5gUDpKi0f1I63"),
+    ("Attachment Folder 5 (Jun 2026 latest)", "https://drive.google.com/drive/folders/1btH18NykL9wDKKuJZZBTSUGCsYkXcaxm"),
 ]
 
 # ── 사이드바 ────────────────────────────────────────────────────────
 with st.sidebar:
-    # 이상 탐지 알림 섹션
-    alert_df = get_anomaly_alerts()
-    if not alert_df.empty:
-        st.markdown('<div class="sidebar-label">이상 탐지 알림</div>', unsafe_allow_html=True)
-        for _, row in alert_df.iterrows():
-            company = row["company_name"]
-            recent  = int(row["recent"])
-            avg4w   = float(row["avg4w"])
-            if avg4w > 0 and recent > avg4w * 3:
-                st.error(f"**{company}** — 최근 7일 {recent}건 (평균 {avg4w}건, **{recent/avg4w:.1f}배** 급증)")
-            else:
-                st.warning(f"**{company}** — 최근 7일 {recent}건 (평균 {avg4w}건, 급감)")
-        st.divider()
+    # 언어 토글
+    _lc1, _lc2 = st.columns(2)
+    if _lc1.button(
+        "KO",
+        use_container_width=True,
+        type="primary" if st.session_state.lang == "ko" else "secondary",
+        key="btn_lang_ko",
+    ):
+        st.session_state.lang = "ko"
+        st.rerun()
+    if _lc2.button(
+        "EN",
+        use_container_width=True,
+        type="primary" if st.session_state.lang == "en" else "secondary",
+        key="btn_lang_en",
+    ):
+        st.session_state.lang = "en"
+        st.rerun()
+
+    st.divider()
 
     # 필터 섹션
-    st.markdown('<div class="sidebar-label">검색 및 필터</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="sidebar-label">{T["label_search_filter"]}</div>', unsafe_allow_html=True)
 
     query_text = st.text_input(
-        "키워드 검색 (FTS)",
-        placeholder="예: DSV, cable, 5000684244",
-        help="Subject · SenderName · Body · HVDC Cases 전체 텍스트 검색",
+        T["kw_search"],
+        placeholder=T["kw_placeholder"],
+        help=T["kw_help"],
     )
 
-    sel_months = st.multiselect("Month", months, help="202410 = 2024년 10월")
+    sel_months = st.multiselect("Month", months, help="202410 = Oct 2024")
     sel_sites  = st.multiselect("Site",  sites)
     sel_stages = st.multiselect("Stage", stages)
 
-    with st.expander("고급 필터"):
-        sender_filter = st.text_input("발신자 이메일 포함", placeholder="@dsv.com")
-        case_filter   = st.text_input("HVDC Case 번호", placeholder="HVDC-ADOPT-SEI-0008")
+    with st.expander(T["adv_filter"]):
+        sender_filter = st.text_input(T["sender_filter_label"], placeholder=T["sender_filter_ph"])
+        case_filter   = st.text_input(T["case_filter_label"],   placeholder=T["case_filter_ph"])
 
-    max_rows = st.slider("최대 결과 수", 50, 2000, 200, 50)
+    max_rows = st.slider(T["max_rows"], 50, 2000, 200, 50)
 
     st.divider()
 
     # 첨부파일 폴더 섹션
-    st.markdown('<div class="sidebar-label">PDF 첨부파일 폴더</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="sidebar-label">{T["label_pdf_folders"]}</div>', unsafe_allow_html=True)
     for _label, _url in DRIVE_FOLDERS:
         st.markdown(f"[{_label}]({_url})")
 
     st.divider()
-    with st.expander("DB 진단", expanded=False):
+    with st.expander(T["db_diag"], expanded=False):
         if DB_LOCAL.exists():
             _size_mb = DB_LOCAL.stat().st_size // 1024 // 1024
             st.code(f"Path: {DB_LOCAL}\nSize: {_size_mb} MB\nExists: ✓", language="text")
@@ -372,8 +598,8 @@ with st.sidebar:
         else:
             st.code(f"Path: {DB_LOCAL}\nNot found ✗", language="text")
 
-    _confirm_reset = st.checkbox("DB 재다운로드를 확인합니다 (기존 캐시가 모두 삭제됩니다)")
-    if st.button("캐시 초기화 + DB 재다운로드", use_container_width=True, disabled=not _confirm_reset):
+    _confirm_reset = st.checkbox(T["confirm_reset"])
+    if st.button(T["btn_reset"], use_container_width=True, disabled=not _confirm_reset):
         st.cache_data.clear()
         st.cache_resource.clear()
         DB_LOCAL.unlink(missing_ok=True)
@@ -382,7 +608,11 @@ with st.sidebar:
 
 
 # ── 탭 (3개) ─────────────────────────────────────────────────────
-tab_search, tab_analytics, tab_semantic = st.tabs(["검색", "분석", "시맨틱 검색"])
+tab_search, tab_analytics, tab_semantic = st.tabs([
+    T["tab_search"],
+    T["tab_analytics"],
+    T["tab_semantic"],
+])
 
 
 # ════════════════════════════════════════════════════════════════
@@ -441,14 +671,14 @@ with tab_search:
     sql        = f"SELECT {col_list}{score_col} FROM emails {where_clause} {order_by} LIMIT ?"
     all_params = PARAMS + extra_params + [max_rows]
 
-    with st.spinner("조회 중..."):
+    with st.spinner(T["searching"]):
         total_cnt = count_emails(where_clause, tuple(PARAMS))
         df        = run_query(sql, all_params if all_params else None)
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("매칭 건수",    f"{total_cnt:,}",        help="현재 필터 조건과 일치하는 이메일 수")
-    c2.metric("표시 결과",    f"{len(df):,}",           help=f"최대 {max_rows:,}건 제한")
-    c3.metric("DB 총 이메일", f"{get_total_emails():,}", help="전체 데이터베이스 보유량")
+    c1.metric(T["metric_match"], f"{total_cnt:,}", help=T["metric_match_help"])
+    c2.metric(T["metric_shown"], f"{len(df):,}",   help=f"{T['metric_shown_help']} {max_rows:,}")
+    c3.metric(T["metric_total"], f"{get_total_emails():,}", help=T["metric_total_help"])
 
     st.divider()
 
@@ -456,15 +686,10 @@ with tab_search:
         any_filter = bool(query_text or sel_months or sel_sites or sel_stages
                           or sender_filter or case_filter)
         if any_filter:
-            st.info(
-                "검색 결과가 없습니다.\n\n"
-                "- 키워드 철자를 확인하거나 더 짧은 단어로 검색해보세요.\n"
-                "- 필터 조건을 줄이면 더 많은 결과가 나올 수 있습니다."
-            )
+            st.info(T["no_results_filter"])
         else:
-            st.info("왼쪽 사이드바에서 키워드 또는 필터를 입력하면 이메일을 검색합니다.")
+            st.info(T["no_results_empty"])
     else:
-        # linkkey → Google Drive search URL
         df_show = df.copy()
         if "linkkey" in df_show.columns:
             df_show["pdf_link"] = df_show["linkkey"].apply(
@@ -479,20 +704,20 @@ with tab_search:
             df_show,
             use_container_width=True,
             column_config={
-                "subject":      st.column_config.TextColumn("제목",       width=280),
-                "senderemail":  st.column_config.TextColumn("발신자",     width=180),
-                "deliverytime": st.column_config.TextColumn("수신일시",   width=140),
-                "hvdc_cases":   st.column_config.TextColumn("HVDC Cases", width=170),
-                "bm25_score":   st.column_config.NumberColumn("관련도", format="%.3f"),
-                "pdf_link":     st.column_config.LinkColumn("📄 PDF", display_text="열기", width=70),
+                "subject":      st.column_config.TextColumn(T["col_subject"],  width=280),
+                "senderemail":  st.column_config.TextColumn(T["col_sender"],   width=180),
+                "deliverytime": st.column_config.TextColumn(T["col_received"], width=140),
+                "hvdc_cases":   st.column_config.TextColumn(T["col_cases"],    width=170),
+                "bm25_score":   st.column_config.NumberColumn(T["col_score"],  format="%.3f"),
+                "pdf_link":     st.column_config.LinkColumn(T["col_pdf"],      display_text="Open", width=70),
             },
             hide_index=True,
             height=500,
         )
 
-        st.subheader("본문 보기")
+        st.subheader(T["email_detail"])
         row_no = st.selectbox(
-            "메일 선택 (no 번호)",
+            T["select_email"],
             options=df["no"].tolist()[:50],
             format_func=lambda x: (
                 f"#{x}  "
@@ -509,27 +734,25 @@ with tab_search:
             if not body_df.empty:
                 r = body_df.iloc[0]
                 col_a, col_b = st.columns(2)
-                col_a.markdown(f"**제목**  \n{r['subject']}")
-                col_a.markdown(f"**발신자**  \n{r['sendername']}  \n`{r['senderemail']}`")
-                col_b.markdown(f"**수신일시**  \n{r['deliverytime']}")
-                col_b.markdown(f"**수신자**  \n{r['recipientto']}")
-                st.text_area("본문", value=r["plaintextbody"] or "(본문 없음)", height=380)
+                col_a.markdown(f"**{T['col_subject']}**  \n{r['subject']}")
+                col_a.markdown(f"**{T['col_sender']}**  \n{r['sendername']}  \n`{r['senderemail']}`")
+                col_b.markdown(f"**{T['col_received']}**  \n{r['deliverytime']}")
+                col_b.markdown(f"**{T['col_recipients']}**  \n{r['recipientto']}")
+                st.text_area(T["col_body"], value=r["plaintextbody"] or f"({T['col_body']} N/A)", height=380)
 
-                # PDF 링크
                 lk = r.get("linkkey") if hasattr(r, "get") else r["linkkey"]
                 if lk and str(lk).strip() not in ("", "None", "nan"):
                     pdf_url = f"https://drive.google.com/drive/search?q={lk}"
-                    st.link_button("📄 첨부 PDF 열기 (Google Drive)", pdf_url, type="primary")
+                    st.link_button(T["btn_pdf"], pdf_url, type="primary")
                 else:
-                    st.markdown("📎 **첨부 PDF 폴더** (날짜별로 분할 저장):")
+                    st.markdown(f"**{T['pdf_folder_alt']}**")
                     for _label, _url in DRIVE_FOLDERS:
                         st.markdown(f"- [{_label}]({_url})")
 
-                # Feature 1: Gemini AI 요약
                 google_api_key = st.secrets.get("google_api_key", "")
                 if google_api_key:
-                    if st.button("🤖 AI 요약 (Gemini)", key=f"gemini_{row_no}"):
-                        with st.spinner("Gemini 분석 중..."):
+                    if st.button(T["btn_ai"], key=f"gemini_{row_no}"):
+                        with st.spinner(T["ai_spinner"]):
                             summary = summarize_with_gemini(
                                 str(r["subject"] or ""),
                                 str(r["plaintextbody"] or ""),
@@ -541,25 +764,24 @@ with tab_search:
                             unsafe_allow_html=True,
                         )
                 else:
-                    st.caption("💡 Gemini AI 요약을 사용하려면 Streamlit Secrets에 `google_api_key`를 추가하세요.")
+                    st.caption(T["ai_no_key"])
 
-                # Feature 3: Case 스레드 타임라인
                 primary_case_val = r.get("primary_case") if hasattr(r, "get") else r["primary_case"]
                 if primary_case_val and str(primary_case_val).strip() not in ("", "None", "nan"):
-                    with st.expander(f"📋 케이스 스레드: {primary_case_val}"):
+                    with st.expander(f"{T['case_thread']}: {primary_case_val}"):
                         thread_df = run_query(
                             "SELECT no, deliverytime, subject, sendername FROM emails "
                             "WHERE primary_case = ? ORDER BY deliverytime",
                             [str(primary_case_val)],
                         )
                         if not thread_df.empty:
-                            st.caption(f"이 케이스 관련 이메일 총 **{len(thread_df)}건**")
+                            st.caption(f"{T['case_thread_count']} **{len(thread_df)}**")
                             fig_thread = px.scatter(
                                 thread_df,
                                 x="deliverytime",
                                 y="sendername",
                                 hover_data=["subject", "no"],
-                                title=f"스레드 타임라인 — {primary_case_val}",
+                                title=f"{T['thread_timeline']} — {primary_case_val}",
                                 color="sendername",
                             )
                             fig_thread.update_layout(**_CHART, height=300)
@@ -571,13 +793,13 @@ with tab_search:
                                 hide_index=True,
                                 height=200,
                                 column_config={
-                                    "subject": st.column_config.TextColumn("제목", width=300),
+                                    "subject": st.column_config.TextColumn(T["col_subject"], width=300),
                                 },
                             )
 
         st.divider()
         st.download_button(
-            "결과 CSV 다운로드",
+            T["csv_download"],
             data=df.to_csv(index=False).encode("utf-8-sig"),
             file_name="hvdc_email_search_result.csv",
             mime="text/csv",
@@ -585,7 +807,7 @@ with tab_search:
 
 
 # ════════════════════════════════════════════════════════════════
-# TAB 2 — 분석 (기존 + Feature 4: 네트워크 그래프)
+# TAB 2 — 분석 (Feature 4: 네트워크 그래프)
 # ════════════════════════════════════════════════════════════════
 with tab_analytics:
 
@@ -610,7 +832,7 @@ with tab_analytics:
                 COALESCE(
                     NULLIF(TRIM(company_name), ''),
                     NULLIF(TRIM(SPLIT_PART(senderemail, '@', 2)), ''),
-                    '미분류'
+                    'Unclassified'
                 ) AS sender_group,
                 COUNT(*) AS email_count
             FROM emails
@@ -624,7 +846,7 @@ with tab_analytics:
     def load_site_stage_distribution():
         site_df = run_query("""
             SELECT
-                COALESCE(NULLIF(TRIM(site), ''), '미분류') AS site,
+                COALESCE(NULLIF(TRIM(site), ''), 'Unclassified') AS site,
                 COUNT(*) AS email_count
             FROM emails
             GROUP BY site
@@ -632,7 +854,7 @@ with tab_analytics:
         """)
         stage_df = run_query("""
             SELECT
-                COALESCE(NULLIF(TRIM(stage), ''), '미분류') AS stage,
+                COALESCE(NULLIF(TRIM(stage), ''), 'Unclassified') AS stage,
                 COUNT(*) AS email_count
             FROM emails
             GROUP BY stage
@@ -722,35 +944,34 @@ with tab_analytics:
         peak_count = int(peak_row["email_count"])
 
     metric_total, metric_peak, metric_sites, metric_stages = st.columns(4)
-    metric_total.metric("분석 이메일", f"{total_volume:,}")
-    metric_peak.metric("피크 월", peak_month, f"{peak_count:,}건" if peak_count else None)
-    metric_sites.metric("Site", f"{len(site_df):,}")
+    metric_total.metric(T["metric_vol"],  f"{total_volume:,}")
+    metric_peak.metric(T["metric_peak"],  peak_month, f"{peak_count:,}" if peak_count else None)
+    metric_sites.metric("Site",  f"{len(site_df):,}")
     metric_stages.metric("Stage", f"{len(stage_df):,}")
 
     if not analytics_export_df.empty:
         st.download_button(
-            "Analytics CSV 다운로드",
+            T["analytics_csv"],
             data=analytics_export_df.to_csv(index=False).encode("utf-8-sig"),
             file_name="hvdc_email_analytics.csv",
             mime="text/csv",
         )
 
-    # 서브탭
     sub_vol, sub_heat, sub_dist, sub_network = st.tabs([
-        "📈 월별 추이",
-        "🗺️ Site × 월 히트맵",
-        "📊 Site / Stage 분포",
-        "🕸️ 네트워크",
+        T["subtab_vol"],
+        T["subtab_heat"],
+        T["subtab_dist"],
+        T["subtab_net"],
     ])
 
     with sub_vol:
-        st.subheader("월별 이메일 수신량")
+        st.subheader(T["vol_title"])
         if vol_df.empty:
-            st.info("월별 데이터가 없습니다.")
+            st.info(T["vol_no_data"])
         else:
             fig_vol = px.bar(
                 vol_df, x="month", y="email_count",
-                labels={"month": "연월", "email_count": "이메일 수"},
+                labels={"month": T["axis_month"], "email_count": T["axis_email_count"]},
                 color="email_count",
                 color_continuous_scale=_SEQ,
             )
@@ -759,20 +980,20 @@ with tab_analytics:
                 showlegend=False,
                 coloraxis_showscale=False,
                 height=340,
-                xaxis=dict(title="연월", tickangle=-45, type="category", tickfont=dict(size=11)),
-                yaxis=dict(title="이메일 수", gridcolor="#E5E7EB"),
+                xaxis=dict(title=T["axis_month"], tickangle=-45, type="category", tickfont=dict(size=11)),
+                yaxis=dict(title=T["axis_email_count"], gridcolor="#E5E7EB"),
             )
-            fig_vol.update_traces(hovertemplate="<b>%{x}</b><br>이메일 수: %{y:,}<extra></extra>")
+            fig_vol.update_traces(hovertemplate=f"<b>%{{x}}</b><br>{T['axis_email_count']}: %{{y:,}}<extra></extra>")
             st.plotly_chart(fig_vol, use_container_width=True)
 
             _, col_top = st.columns([3, 2])
             with col_top:
-                st.subheader("Top 20 발신 그룹")
+                st.subheader(T["top_senders"])
                 if not top_df.empty:
                     fig_top = px.bar(
                         top_df, x="email_count", y="sender_group",
                         orientation="h",
-                        labels={"email_count": "이메일 수", "sender_group": ""},
+                        labels={"email_count": T["axis_email_count"], "sender_group": ""},
                         color="email_count",
                         color_continuous_scale=_SEQ,
                     )
@@ -781,19 +1002,19 @@ with tab_analytics:
                         showlegend=False,
                         coloraxis_showscale=False,
                         yaxis=dict(categoryorder="total ascending"),
-                        xaxis=dict(title="이메일 수", gridcolor="#E5E7EB"),
+                        xaxis=dict(title=T["axis_email_count"], gridcolor="#E5E7EB"),
                         height=400,
                     )
-                    fig_top.update_traces(hovertemplate="<b>%{y}</b><br>이메일 수: %{x:,}<extra></extra>")
+                    fig_top.update_traces(hovertemplate=f"<b>%{{y}}</b><br>{T['axis_email_count']}: %{{x:,}}<extra></extra>")
                     st.plotly_chart(fig_top, use_container_width=True)
 
-            with st.expander("월별 원시 데이터"):
+            with st.expander(T["raw_data"]):
                 st.dataframe(vol_df, use_container_width=True, hide_index=True)
 
     with sub_heat:
-        st.subheader("Site × 월 히트맵")
+        st.subheader(T["heat_title"])
         if heat_df.empty:
-            st.info("Site 또는 월 데이터가 없습니다.")
+            st.info(T["heat_no_data"])
         else:
             pivot = heat_df.pivot_table(
                 index="site", columns="month",
@@ -802,7 +1023,7 @@ with tab_analytics:
             pivot.columns = [str(c) for c in pivot.columns]
             fig_heat = px.imshow(
                 pivot,
-                labels={"x": "연월", "y": "Site", "color": "이메일 수"},
+                labels={"x": T["axis_month"], "y": T["axis_site"], "color": T["axis_email_count"]},
                 color_continuous_scale=_SEQ,
                 aspect="auto",
                 text_auto=False,
@@ -812,16 +1033,16 @@ with tab_analytics:
                 height=400,
                 xaxis=dict(type="category", tickangle=-45, tickfont=dict(size=12)),
             )
-            fig_heat.update_traces(hovertemplate="<b>%{y}</b> · %{x}<br>이메일 수: %{z:,}<extra></extra>")
+            fig_heat.update_traces(hovertemplate=f"<b>%{{y}}</b> · %{{x}}<br>{T['axis_email_count']}: %{{z:,}}<extra></extra>")
             st.plotly_chart(fig_heat, use_container_width=True)
 
     with sub_dist:
-        st.subheader("Site / Stage 분포")
+        st.subheader(T["dist_title"])
         col_site, col_stage = st.columns(2)
 
         with col_site:
             if site_df.empty:
-                st.info("Site 데이터가 없습니다.")
+                st.info(T["site_no_data"])
             else:
                 fig_site = px.pie(
                     site_df.head(12),
@@ -831,14 +1052,14 @@ with tab_analytics:
                 )
                 fig_site.update_traces(
                     hole=0.45,
-                    hovertemplate="<b>%{label}</b><br>이메일 수: %{value:,}<extra></extra>",
+                    hovertemplate=f"<b>%{{label}}</b><br>{T['axis_email_count']}: %{{value:,}}<extra></extra>",
                 )
                 fig_site.update_layout(**_CHART, height=360, legend_title_text="Site")
                 st.plotly_chart(fig_site, use_container_width=True)
 
         with col_stage:
             if stage_df.empty:
-                st.info("Stage 데이터가 없습니다.")
+                st.info(T["stage_no_data"])
             else:
                 fig_stage = px.pie(
                     stage_df.head(12),
@@ -848,7 +1069,7 @@ with tab_analytics:
                 )
                 fig_stage.update_traces(
                     hole=0.45,
-                    hovertemplate="<b>%{label}</b><br>이메일 수: %{value:,}<extra></extra>",
+                    hovertemplate=f"<b>%{{label}}</b><br>{T['axis_email_count']}: %{{value:,}}<extra></extra>",
                 )
                 fig_stage.update_layout(**_CHART, height=360, legend_title_text="Stage")
                 st.plotly_chart(fig_stage, use_container_width=True)
@@ -859,20 +1080,19 @@ with tab_analytics:
             hide_index=True,
             height=320,
             column_config={
-                "metric": st.column_config.TextColumn("집계", width=160),
-                "dimension": st.column_config.TextColumn("항목", width=220),
-                "count": st.column_config.NumberColumn("이메일 수", format="%d"),
+                "metric":     st.column_config.TextColumn(T["col_metric"],    width=160),
+                "dimension":  st.column_config.TextColumn(T["col_dim"],       width=220),
+                "count":      st.column_config.NumberColumn(T["col_count"],   format="%d"),
             },
         )
 
-    # Feature 4: 네트워크 그래프
     with sub_network:
-        st.subheader("회사 이메일 네트워크")
-        st.caption("발신 회사 → 수신 도메인 흐름 (5건 이상만 표시)")
+        st.subheader(T["net_title"])
+        st.caption(T["net_caption"])
 
         net_df = load_network_data()
         if net_df.empty:
-            st.info("네트워크 데이터가 없습니다.")
+            st.info(T["net_no_data"])
         else:
             try:
                 import networkx as nx
@@ -919,10 +1139,10 @@ with tab_analytics:
                         color=[G.degree(n) for n in G.nodes()],
                         colorscale=[[0, "#AED6F1"], [1, "#1F5276"]],
                         showscale=True,
-                        colorbar=dict(title="연결 수", thickness=12),
+                        colorbar=dict(title=T["connections"], thickness=12),
                         line=dict(width=1, color="#FFFFFF"),
                     ),
-                    hovertemplate="<b>%{text}</b><br>연결 수: %{marker.size}<extra></extra>",
+                    hovertemplate=f"<b>%{{text}}</b><br>{T['connections']}: %{{marker.size}}<extra></extra>",
                 )
 
                 fig_net = go.Figure(data=edge_traces + [node_trace])
@@ -936,13 +1156,12 @@ with tab_analytics:
                 st.plotly_chart(fig_net, use_container_width=True)
 
             except ImportError:
-                # networkx 미설치 시 간단한 chord-style bar 대체
-                st.info("networkx 미설치 — 상위 연결 현황으로 대체 표시합니다. `pip install networkx`")
+                st.info(T["net_fallback"])
                 top_net = net_df.sort_values("weight", ascending=False).head(30)
                 top_net["link"] = top_net["source"] + " → " + top_net["target"]
                 fig_fallback = px.bar(
                     top_net, x="weight", y="link", orientation="h",
-                    labels={"weight": "이메일 수", "link": ""},
+                    labels={"weight": T["col_weight"], "link": ""},
                     color="weight", color_continuous_scale=_SEQ,
                 )
                 fig_fallback.update_layout(**_CHART, height=600,
@@ -954,44 +1173,38 @@ with tab_analytics:
                 use_container_width=True,
                 hide_index=True,
                 column_config={
-                    "source": st.column_config.TextColumn("발신 회사", width=200),
-                    "target": st.column_config.TextColumn("수신 도메인", width=200),
-                    "weight": st.column_config.NumberColumn("이메일 수", format="%d"),
+                    "source": st.column_config.TextColumn(T["col_source"], width=200),
+                    "target": st.column_config.TextColumn(T["col_target"], width=200),
+                    "weight": st.column_config.NumberColumn(T["col_weight"], format="%d"),
                 },
             )
 
 
 # ════════════════════════════════════════════════════════════════
-# TAB 3 — 시맨틱 검색 (Feature 2 + 6)
+# TAB 3 — 시맨틱 검색 (Feature 2)
 # ════════════════════════════════════════════════════════════════
 with tab_semantic:
-    st.subheader("시맨틱 검색 (all-MiniLM-L6-v2, 384 dim)")
+    st.subheader(T["sem_title"])
 
     _has_emb = has_embeddings()
     if not _has_emb:
-        st.info(
-            "임베딩 데이터가 없습니다. 로컬에서 `build_db.py`를 실행하여 DB를 재빌드하세요:\n\n"
-            "```bash\n"
-            "python build_db.py\n"
-            "```\n\n"
-            "완료 후 GitHub Release에 v2.0으로 재업로드하고 `DB_URL`을 업데이트하세요."
-        )
+        st.info(T["sem_no_emb"])
     else:
         google_api_key = st.secrets.get("google_api_key", "")
         sem_query = st.text_input(
-            "의미 기반 검색어",
-            placeholder="예: transformer installation schedule delay",
-            help="정확한 키워드 대신 의미로 검색합니다",
+            T["sem_query_label"],
+            placeholder=T["sem_query_ph"],
+            help=T["sem_query_help"],
         )
-        sem_top_k = st.slider("결과 수", 10, 100, 30, 10)
-        use_hybrid = st.checkbox("BM25 + 시맨틱 Hybrid (권장)", value=True)
+        sem_top_k = st.slider(T["sem_top_k"], 10, 100, 30, 10)
+        use_hybrid = st.checkbox(T["sem_hybrid"], value=True)
 
-        if sem_query and st.button("시맨틱 검색 실행"):
-            with st.spinner("임베딩 생성 중..."):
+        if sem_query and st.button(T["sem_run"]):
+            with st.spinner(T["sem_embedding"]):
                 qvec = get_query_embedding(sem_query)
 
             if qvec:
-                with st.spinner("벡터 검색 중..."):
+                with st.spinner(T["sem_searching"]):
                     vec_df = run_query(
                         f"SELECT no, subject, sendername, deliverytime, company_name, "
                         f"array_cosine_similarity(embedding, ?::FLOAT[384]) AS cosine_score "
@@ -1024,19 +1237,19 @@ with tab_semantic:
                         score_col_name = "cosine_score"
 
                     if len(result_df) == 0:
-                        st.warning("결과 없음 — 다른 검색어를 시도하거나 Hybrid 모드를 켜세요.")
+                        st.warning(T["sem_no_result"])
                     else:
-                        st.success(f"검색 완료 — {len(result_df)}건")
+                        st.success(f"{T['sem_done']} — {len(result_df)}")
                     st.dataframe(
                         result_df,
                         use_container_width=True,
                         hide_index=True,
                         height=500,
                         column_config={
-                            "subject":       st.column_config.TextColumn("제목", width=200),
-                            "sendername":    st.column_config.TextColumn("발신자", width=150),
-                            "deliverytime":  st.column_config.TextColumn("수신일시", width=140),
-                            "company_name":  st.column_config.TextColumn("회사", width=150),
-                            score_col_name:  st.column_config.NumberColumn("유사도", format="%.4f"),
+                            "subject":       st.column_config.TextColumn(T["col_subject"],   width=200),
+                            "sendername":    st.column_config.TextColumn(T["col_sender"],    width=150),
+                            "deliverytime":  st.column_config.TextColumn(T["col_received"],  width=140),
+                            "company_name":  st.column_config.TextColumn(T["col_company"],   width=150),
+                            score_col_name:  st.column_config.NumberColumn(T["col_similarity"], format="%.4f"),
                         },
                     )
