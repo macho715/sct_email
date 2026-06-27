@@ -27,6 +27,10 @@ _CHART = dict(
     font=dict(family="system-ui, -apple-system, sans-serif", size=12),
     margin=dict(l=0, r=0, t=32, b=0),
 )
+_PIE_COLORS = [
+    "#1F5276", "#2E86C1", "#5DADE2", "#A3E4D7",
+    "#F4D03F", "#E67E22", "#A569BD", "#7F8C8D",
+]
 
 # ─────────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -57,7 +61,12 @@ st.markdown("""
     font-size: .75rem; color: #64748B; font-weight: 600;
     text-transform: uppercase; letter-spacing: .04em;
 }
+/* Tab active indicator */
 .stTabs [role="tab"] { font-weight: 500; }
+.stTabs [data-baseweb="tab"][aria-selected="true"] {
+    border-bottom: 3px solid #1F5276;
+    color: #1F5276;
+}
 .stButton > button:focus-visible,
 [data-testid="stDownloadButton"] > button:focus-visible {
     outline: 2px solid #1F5276;
@@ -71,18 +80,61 @@ st.markdown("""
 [data-testid="stDownloadButton"] > button:hover { background: #2E86C1; }
 div[data-testid="stAlert"] { border-radius: 8px; }
 [data-testid="stDataFrame"] { border-radius: 8px; }
+/* Sidebar section card */
+.sidebar-section {
+    background: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+}
+/* Sidebar section label */
+.sidebar-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #2471A3;
+    margin-bottom: 6px;
+}
+/* AI summary branded card */
+.ai-summary-card {
+    background: #E8F4FD;
+    border-left: 4px solid #1F5276;
+    border-radius: 0 8px 8px 0;
+    padding: 14px 16px;
+    margin-top: 8px;
+    white-space: pre-wrap;
+    font-size: 0.9rem;
+    line-height: 1.6;
+    color: #1E293B;
+}
 </style>
 """, unsafe_allow_html=True)
 
 
 # ── DB 연결 (다운로드는 top-level에서 처리) ──────────────────────────
 @st.cache_resource
-def get_con():
-    con = duckdb.connect(str(DB_LOCAL), read_only=True)
+def _ensure_fts_extension():
+    if not DB_LOCAL.exists():
+        return
+
+    tmp = duckdb.connect(str(DB_LOCAL))
     try:
-        con.execute("LOAD fts;")
-    except Exception:
-        pass
+        try:
+            tmp.execute("INSTALL fts;")
+        except Exception:
+            pass
+        tmp.execute("LOAD fts;")
+    finally:
+        tmp.close()
+
+
+@st.cache_resource
+def get_con():
+    _ensure_fts_extension()
+    con = duckdb.connect(str(DB_LOCAL), read_only=True)
+    con.execute("LOAD fts;")
     try:
         con.execute("LOAD vss;")
     except Exception:
@@ -122,10 +174,15 @@ def load_filter_options():
     return months, sites, stages
 
 
-@st.cache_data(ttl=3600)
-def get_total_emails() -> int:
-    df = run_query("SELECT COUNT(*) FROM emails")
+@st.cache_data(ttl=300)
+def count_emails(where_clause: str = "", params: tuple = ()) -> int:
+    sql = f"SELECT COUNT(*) FROM emails {where_clause}"
+    df = run_query(sql, list(params) if params else None)
     return int(df.iloc[0, 0]) if not df.empty else 0
+
+
+def get_total_emails() -> int:
+    return count_emails()
 
 
 # ── Feature 5: 이상 탐지 ─────────────────────────────────────────
@@ -261,21 +318,22 @@ DRIVE_FOLDERS = [
 
 # ── 사이드바 ────────────────────────────────────────────────────────
 with st.sidebar:
-    # Feature 5: 이상 탐지 알림
+    # 이상 탐지 알림 섹션
     alert_df = get_anomaly_alerts()
     if not alert_df.empty:
-        st.subheader("⚠️ 이상 탐지 알림")
+        st.markdown('<div class="sidebar-label">이상 탐지 알림</div>', unsafe_allow_html=True)
         for _, row in alert_df.iterrows():
             company = row["company_name"]
             recent  = int(row["recent"])
             avg4w   = float(row["avg4w"])
             if avg4w > 0 and recent > avg4w * 3:
-                st.error(f"🔺 **{company}** — 최근 7일 {recent}건 (평균 {avg4w}건, **{recent/avg4w:.1f}배** 급증)")
+                st.error(f"**{company}** — 최근 7일 {recent}건 (평균 {avg4w}건, **{recent/avg4w:.1f}배** 급증)")
             else:
-                st.warning(f"🔻 **{company}** — 최근 7일 {recent}건 (평균 {avg4w}건, 급감)")
+                st.warning(f"**{company}** — 최근 7일 {recent}건 (평균 {avg4w}건, 급감)")
         st.divider()
 
-    st.header("필터")
+    # 필터 섹션
+    st.markdown('<div class="sidebar-label">검색 및 필터</div>', unsafe_allow_html=True)
 
     query_text = st.text_input(
         "키워드 검색 (FTS)",
@@ -294,12 +352,14 @@ with st.sidebar:
     max_rows = st.slider("최대 결과 수", 50, 2000, 200, 50)
 
     st.divider()
-    st.markdown("**📎 PDF 첨부파일 폴더**")
+
+    # 첨부파일 폴더 섹션
+    st.markdown('<div class="sidebar-label">PDF 첨부파일 폴더</div>', unsafe_allow_html=True)
     for _label, _url in DRIVE_FOLDERS:
         st.markdown(f"[{_label}]({_url})")
 
     st.divider()
-    with st.expander("🛠 DB 진단", expanded=False):
+    with st.expander("DB 진단", expanded=False):
         if DB_LOCAL.exists():
             _size_mb = DB_LOCAL.stat().st_size // 1024 // 1024
             st.code(f"Path: {DB_LOCAL}\nSize: {_size_mb} MB\nExists: ✓", language="text")
@@ -381,11 +441,8 @@ with tab_search:
     sql        = f"SELECT {col_list}{score_col} FROM emails {where_clause} {order_by} LIMIT ?"
     all_params = PARAMS + extra_params + [max_rows]
 
-    total_sql = f"SELECT COUNT(*) FROM emails {where_clause}"
-
     with st.spinner("조회 중..."):
-        total_df  = run_query(total_sql, PARAMS if PARAMS else None)
-        total_cnt = int(total_df.iloc[0, 0]) if not total_df.empty else 0
+        total_cnt = count_emails(where_clause, tuple(PARAMS))
         df        = run_query(sql, all_params if all_params else None)
 
     c1, c2, c3 = st.columns(3)
@@ -478,7 +535,11 @@ with tab_search:
                                 str(r["plaintextbody"] or ""),
                                 google_api_key,
                             )
-                        st.info(summary)
+                        import html as _html
+                        st.markdown(
+                            f'<div class="ai-summary-card">{_html.escape(summary)}</div>',
+                            unsafe_allow_html=True,
+                        )
                 else:
                     st.caption("💡 Gemini AI 요약을 사용하려면 Streamlit Secrets에 `google_api_key`를 추가하세요.")
 
@@ -546,14 +607,69 @@ with tab_analytics:
     def load_top_senders(n: int = 20):
         return run_query(f"""
             SELECT
-                COALESCE(company_name, SPLIT_PART(senderemail, '@', 2)) AS sender_group,
+                COALESCE(
+                    NULLIF(TRIM(company_name), ''),
+                    NULLIF(TRIM(SPLIT_PART(senderemail, '@', 2)), ''),
+                    '미분류'
+                ) AS sender_group,
                 COUNT(*) AS email_count
             FROM emails
-            WHERE senderemail IS NOT NULL
+            WHERE senderemail IS NOT NULL OR company_name IS NOT NULL
             GROUP BY sender_group
             ORDER BY email_count DESC
             LIMIT {n}
         """)
+
+    @st.cache_data(ttl=3600)
+    def load_site_stage_distribution():
+        site_df = run_query("""
+            SELECT
+                COALESCE(NULLIF(TRIM(site), ''), '미분류') AS site,
+                COUNT(*) AS email_count
+            FROM emails
+            GROUP BY site
+            ORDER BY email_count DESC
+        """)
+        stage_df = run_query("""
+            SELECT
+                COALESCE(NULLIF(TRIM(stage), ''), '미분류') AS stage,
+                COUNT(*) AS email_count
+            FROM emails
+            GROUP BY stage
+            ORDER BY email_count DESC
+        """)
+        return site_df, stage_df
+
+    def build_analytics_export(
+        vol_df: pd.DataFrame,
+        top_df: pd.DataFrame,
+        site_df: pd.DataFrame,
+        stage_df: pd.DataFrame,
+    ) -> pd.DataFrame:
+        frames = []
+        if not vol_df.empty:
+            frames.append(
+                vol_df.rename(columns={"month": "dimension", "email_count": "count"})
+                .assign(metric="monthly_volume")[["metric", "dimension", "count"]]
+            )
+        if not top_df.empty:
+            frames.append(
+                top_df.rename(columns={"sender_group": "dimension", "email_count": "count"})
+                .assign(metric="top_sender")[["metric", "dimension", "count"]]
+            )
+        if not site_df.empty:
+            frames.append(
+                site_df.rename(columns={"site": "dimension", "email_count": "count"})
+                .assign(metric="site_distribution")[["metric", "dimension", "count"]]
+            )
+        if not stage_df.empty:
+            frames.append(
+                stage_df.rename(columns={"stage": "dimension", "email_count": "count"})
+                .assign(metric="stage_distribution")[["metric", "dimension", "count"]]
+            )
+        if not frames:
+            return pd.DataFrame(columns=["metric", "dimension", "count"])
+        return pd.concat(frames, ignore_index=True)
 
     @st.cache_data(ttl=3600)
     def load_heatmap():
@@ -591,12 +707,44 @@ with tab_analytics:
             LIMIT 150
         """)
 
+    vol_df = load_monthly_volume()
+    top_df = load_top_senders(20)
+    heat_df = load_heatmap()
+    site_df, stage_df = load_site_stage_distribution()
+    analytics_export_df = build_analytics_export(vol_df, top_df, site_df, stage_df)
+
+    total_volume = int(vol_df["email_count"].sum()) if not vol_df.empty else get_total_emails()
+    peak_month = "-"
+    peak_count = 0
+    if not vol_df.empty:
+        peak_row = vol_df.sort_values("email_count", ascending=False).iloc[0]
+        peak_month = str(peak_row["month"])
+        peak_count = int(peak_row["email_count"])
+
+    metric_total, metric_peak, metric_sites, metric_stages = st.columns(4)
+    metric_total.metric("분석 이메일", f"{total_volume:,}")
+    metric_peak.metric("피크 월", peak_month, f"{peak_count:,}건" if peak_count else None)
+    metric_sites.metric("Site", f"{len(site_df):,}")
+    metric_stages.metric("Stage", f"{len(stage_df):,}")
+
+    if not analytics_export_df.empty:
+        st.download_button(
+            "Analytics CSV 다운로드",
+            data=analytics_export_df.to_csv(index=False).encode("utf-8-sig"),
+            file_name="hvdc_email_analytics.csv",
+            mime="text/csv",
+        )
+
     # 서브탭
-    sub_vol, sub_heat, sub_network = st.tabs(["📈 월별 추이", "🗺️ Site × 월 히트맵", "🕸️ 네트워크"])
+    sub_vol, sub_heat, sub_dist, sub_network = st.tabs([
+        "📈 월별 추이",
+        "🗺️ Site × 월 히트맵",
+        "📊 Site / Stage 분포",
+        "🕸️ 네트워크",
+    ])
 
     with sub_vol:
         st.subheader("월별 이메일 수신량")
-        vol_df = load_monthly_volume()
         if vol_df.empty:
             st.info("월별 데이터가 없습니다.")
         else:
@@ -617,10 +765,9 @@ with tab_analytics:
             fig_vol.update_traces(hovertemplate="<b>%{x}</b><br>이메일 수: %{y:,}<extra></extra>")
             st.plotly_chart(fig_vol, use_container_width=True)
 
-            col_heat2, col_top = st.columns([3, 2])
+            _, col_top = st.columns([3, 2])
             with col_top:
                 st.subheader("Top 20 발신 그룹")
-                top_df = load_top_senders(20)
                 if not top_df.empty:
                     fig_top = px.bar(
                         top_df, x="email_count", y="sender_group",
@@ -645,7 +792,6 @@ with tab_analytics:
 
     with sub_heat:
         st.subheader("Site × 월 히트맵")
-        heat_df = load_heatmap()
         if heat_df.empty:
             st.info("Site 또는 월 데이터가 없습니다.")
         else:
@@ -668,6 +814,56 @@ with tab_analytics:
             )
             fig_heat.update_traces(hovertemplate="<b>%{y}</b> · %{x}<br>이메일 수: %{z:,}<extra></extra>")
             st.plotly_chart(fig_heat, use_container_width=True)
+
+    with sub_dist:
+        st.subheader("Site / Stage 분포")
+        col_site, col_stage = st.columns(2)
+
+        with col_site:
+            if site_df.empty:
+                st.info("Site 데이터가 없습니다.")
+            else:
+                fig_site = px.pie(
+                    site_df.head(12),
+                    names="site",
+                    values="email_count",
+                    color_discrete_sequence=_PIE_COLORS,
+                )
+                fig_site.update_traces(
+                    hole=0.45,
+                    hovertemplate="<b>%{label}</b><br>이메일 수: %{value:,}<extra></extra>",
+                )
+                fig_site.update_layout(**_CHART, height=360, legend_title_text="Site")
+                st.plotly_chart(fig_site, use_container_width=True)
+
+        with col_stage:
+            if stage_df.empty:
+                st.info("Stage 데이터가 없습니다.")
+            else:
+                fig_stage = px.pie(
+                    stage_df.head(12),
+                    names="stage",
+                    values="email_count",
+                    color_discrete_sequence=_PIE_COLORS,
+                )
+                fig_stage.update_traces(
+                    hole=0.45,
+                    hovertemplate="<b>%{label}</b><br>이메일 수: %{value:,}<extra></extra>",
+                )
+                fig_stage.update_layout(**_CHART, height=360, legend_title_text="Stage")
+                st.plotly_chart(fig_stage, use_container_width=True)
+
+        st.dataframe(
+            analytics_export_df,
+            use_container_width=True,
+            hide_index=True,
+            height=320,
+            column_config={
+                "metric": st.column_config.TextColumn("집계", width=160),
+                "dimension": st.column_config.TextColumn("항목", width=220),
+                "count": st.column_config.NumberColumn("이메일 수", format="%d"),
+            },
+        )
 
     # Feature 4: 네트워크 그래프
     with sub_network:
