@@ -170,11 +170,14 @@ def summarize_with_gemini(subject: str, body: str, api_key: str) -> str:
 본문:
 {str(body or '')[:3000]}"""
         resp = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-1.5-flash",
             contents=prompt,
         )
         return resp.text
     except Exception as e:
+        msg = str(e)
+        if "429" in msg or "RESOURCE_EXHAUSTED" in msg or "spending cap" in msg:
+            return "⚠️ Gemini API 월 지출 한도 초과. https://aistudio.google.com/app/apikey 에서 한도를 높이거나 다음 달에 다시 시도하세요."
         return f"오류: {e}"
 
 
