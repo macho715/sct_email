@@ -54,10 +54,15 @@ st.markdown("""
 [data-testid="stSidebar"] .stSlider label { color: #374151 !important; }
 [data-testid="stMetricValue"]  { color: #1F5276; font-size: 1.55rem; font-weight: 700; }
 [data-testid="stMetricLabel"]  {
-    font-size: .72rem; color: #64748B; font-weight: 600;
+    font-size: .75rem; color: #64748B; font-weight: 600;
     text-transform: uppercase; letter-spacing: .04em;
 }
 .stTabs [role="tab"] { font-weight: 500; }
+.stButton > button:focus-visible,
+[data-testid="stDownloadButton"] > button:focus-visible {
+    outline: 2px solid #1F5276;
+    outline-offset: 2px;
+}
 [data-testid="stDownloadButton"] > button {
     background: #1F5276; color: white;
     border: none; border-radius: 6px;
@@ -304,7 +309,8 @@ with st.sidebar:
         else:
             st.code(f"Path: {DB_LOCAL}\nNot found ✗", language="text")
 
-    if st.button("캐시 초기화 + DB 재다운로드", use_container_width=True):
+    _confirm_reset = st.checkbox("DB 재다운로드를 확인합니다 (기존 캐시가 모두 삭제됩니다)")
+    if st.button("캐시 초기화 + DB 재다운로드", use_container_width=True, disabled=not _confirm_reset):
         st.cache_data.clear()
         st.cache_resource.clear()
         DB_LOCAL.unlink(missing_ok=True)
@@ -313,7 +319,7 @@ with st.sidebar:
 
 
 # ── 탭 (3개) ─────────────────────────────────────────────────────
-tab_search, tab_analytics, tab_semantic = st.tabs(["🔍 검색", "📊 분석", "🤖 시맨틱검색"])
+tab_search, tab_analytics, tab_semantic = st.tabs(["검색", "분석", "시맨틱 검색"])
 
 
 # ════════════════════════════════════════════════════════════════
@@ -655,14 +661,14 @@ with tab_analytics:
             fig_heat.update_layout(
                 **_CHART,
                 height=400,
-                xaxis=dict(type="category", tickangle=-45, tickfont=dict(size=10)),
+                xaxis=dict(type="category", tickangle=-45, tickfont=dict(size=12)),
             )
             fig_heat.update_traces(hovertemplate="<b>%{y}</b> · %{x}<br>이메일 수: %{z:,}<extra></extra>")
             st.plotly_chart(fig_heat, use_container_width=True)
 
     # Feature 4: 네트워크 그래프
     with sub_network:
-        st.subheader("🕸️ 회사 이메일 네트워크")
+        st.subheader("회사 이메일 네트워크")
         st.caption("발신 회사 → 수신 도메인 흐름 (5건 이상만 표시)")
 
         net_df = load_network_data()
@@ -676,7 +682,13 @@ with tab_analytics:
                     net_df, source="source", target="target",
                     edge_attr="weight", create_using=nx.DiGraph()
                 )
-                pos = nx.spring_layout(G, seed=42, k=2.0)
+
+                @st.cache_data(show_spinner=False)
+                def _compute_layout(_edge_list: list) -> dict:
+                    _G = nx.from_edgelist(_edge_list, create_using=nx.DiGraph())
+                    return nx.spring_layout(_G, seed=42, k=2.0)
+
+                pos = _compute_layout(list(G.edges()))
 
                 edge_traces = []
                 for u, v, data in G.edges(data=True):
@@ -686,7 +698,7 @@ with tab_analytics:
                     edge_traces.append(go.Scatter(
                         x=[x0, x1, None], y=[y0, y1, None],
                         mode="lines",
-                        line=dict(width=min(w / 20, 5), color="#AED6F1"),
+                        line=dict(width=min(w / 20, 5), color="#5DADE2"),
                         hoverinfo="none",
                         showlegend=False,
                     ))
@@ -702,7 +714,7 @@ with tab_analytics:
                     mode="markers+text",
                     text=node_text,
                     textposition="top center",
-                    textfont=dict(size=9),
+                    textfont=dict(size=12),
                     marker=dict(
                         size=node_size,
                         color=[G.degree(n) for n in G.nodes()],
@@ -754,7 +766,7 @@ with tab_analytics:
 # TAB 3 — 시맨틱 검색 (Feature 2 + 6)
 # ════════════════════════════════════════════════════════════════
 with tab_semantic:
-    st.subheader("🤖 시맨틱 검색 (all-MiniLM-L6-v2, 384 dim)")
+    st.subheader("시맨틱 검색 (all-MiniLM-L6-v2, 384 dim)")
 
     _has_emb = has_embeddings()
     if not _has_emb:
@@ -775,7 +787,7 @@ with tab_semantic:
         sem_top_k = st.slider("결과 수", 10, 100, 30, 10)
         use_hybrid = st.checkbox("BM25 + 시맨틱 Hybrid (권장)", value=True)
 
-        if sem_query and st.button("🔍 시맨틱 검색 실행"):
+        if sem_query and st.button("시맨틱 검색 실행"):
             with st.spinner("임베딩 생성 중..."):
                 qvec = get_query_embedding(sem_query)
 
@@ -812,14 +824,17 @@ with tab_semantic:
                         result_df = vec_df.head(sem_top_k)
                         score_col_name = "cosine_score"
 
-                    st.success(f"검색 완료 — {len(result_df)}건")
+                    if len(result_df) == 0:
+                        st.warning("결과 없음 — 다른 검색어를 시도하거나 Hybrid 모드를 켜세요.")
+                    else:
+                        st.success(f"검색 완료 — {len(result_df)}건")
                     st.dataframe(
                         result_df,
                         use_container_width=True,
                         hide_index=True,
                         height=500,
                         column_config={
-                            "subject":       st.column_config.TextColumn("제목", width=300),
+                            "subject":       st.column_config.TextColumn("제목", width=200),
                             "sendername":    st.column_config.TextColumn("발신자", width=150),
                             "deliverytime":  st.column_config.TextColumn("수신일시", width=140),
                             "company_name":  st.column_config.TextColumn("회사", width=150),
