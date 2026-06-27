@@ -170,7 +170,7 @@ def summarize_with_gemini(subject: str, body: str, api_key: str) -> str:
 본문:
 {str(body or '')[:3000]}"""
         resp = client.models.generate_content(
-            model="gemini-1.5-flash",
+            model="gemini-2.0-flash",
             contents=prompt,
         )
         return resp.text
