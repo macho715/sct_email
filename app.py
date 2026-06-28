@@ -147,6 +147,16 @@ _T = {
         "db_ok": "DB 준비 완료!",
         "db_fail": "다운로드 실패",
         "db_err": "DB 다운로드 실패: ",
+        "snip_header": "관련 본문 발췌",
+        "snip_none": "(일치 문장 없음)",
+        "col_snippet": "발췌",
+        "sim_header": "유사 이메일 TOP 5",
+        "sim_no_emb": "임베딩 데이터 없음 — 유사 검색 불가",
+        "sim_searching": "유사 이메일 검색 중...",
+        "col_sim_score": "유사도",
+        "sem_translate": "한국어 감지 → 영어로 번역 중...",
+        "sem_translated": "번역된 검색어",
+        "sem_no_key_translate": "Gemini API 키 없음 — 원문으로 검색합니다.",
     },
     "en": {
         # page
@@ -261,6 +271,16 @@ _T = {
         "db_ok": "DB ready!",
         "db_fail": "Download failed",
         "db_err": "DB download failed: ",
+        "snip_header": "Matching Snippet",
+        "snip_none": "(no match)",
+        "col_snippet": "Snippet",
+        "sim_header": "TOP 5 Similar Emails",
+        "sim_no_emb": "No embedding — similarity search unavailable.",
+        "sim_searching": "Finding similar emails...",
+        "col_sim_score": "Similarity",
+        "sem_translate": "Korean detected — translating to English...",
+        "sem_translated": "Translated query",
+        "sem_no_key_translate": "No Gemini key — searching with original query.",
     },
 }
 
@@ -485,6 +505,41 @@ def has_embeddings() -> bool:
         return False
 
 
+def _extract_snippet(body: str, query: str, context_chars: int = 150) -> str:
+    if not body or not query:
+        return ""
+    body_lower = body.lower()
+    words = [w for w in query.lower().split() if len(w) > 2]
+    best_pos = -1
+    for w in words:
+        pos = body_lower.find(w)
+        if pos != -1 and (best_pos == -1 or pos < best_pos):
+            best_pos = pos
+    if best_pos == -1:
+        return ""
+    match_len = len(words[0]) if words else 4
+    start = max(0, best_pos - context_chars)
+    end = min(len(body), best_pos + match_len + context_chars)
+    snippet = body[start:end].replace("\n", " ").replace("\r", " ").strip()
+    return ("…" if start > 0 else "") + snippet + ("…" if end < len(body) else "")
+
+
+def _translate_ko_to_en(text: str, api_key: str) -> str:
+    try:
+        from google import genai
+        client = genai.Client(api_key=api_key)
+        resp = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=(
+                "Translate the following Korean text to English for email search. "
+                "Return ONLY the translated text, no explanation:\n\n" + text
+            ),
+        )
+        return resp.text.strip()
+    except Exception:
+        return text
+
+
 # ── 언어 단축 참조 (전체 앱에서 사용) ────────────────────────────────
 T = _T[st.session_state.lang]
 
@@ -691,6 +746,20 @@ with tab_search:
             st.info(T["no_results_empty"])
     else:
         df_show = df.copy()
+        if query_text and not df_show.empty:
+            _nos = [str(n) for n in df_show["no"].tolist()]
+            _ph = ", ".join(["?"] * len(_nos))
+            _body_batch = run_query(
+                f"SELECT no, plaintextbody FROM emails WHERE no IN ({_ph})",
+                _nos,
+            )
+            _bmap = (
+                dict(zip(_body_batch["no"].astype(str), _body_batch["plaintextbody"]))
+                if not _body_batch.empty else {}
+            )
+            df_show["snippet"] = df_show["no"].apply(
+                lambda n: _extract_snippet(_bmap.get(str(n), ""), query_text) or T["snip_none"]
+            )
         if "linkkey" in df_show.columns:
             df_show["pdf_link"] = df_show["linkkey"].apply(
                 lambda k: f"https://drive.google.com/drive/search?q={k}"
@@ -710,6 +779,7 @@ with tab_search:
                 "hvdc_cases":   st.column_config.TextColumn(T["col_cases"],    width=170),
                 "bm25_score":   st.column_config.NumberColumn(T["col_score"],  format="%.3f"),
                 "pdf_link":     st.column_config.LinkColumn(T["col_pdf"],      display_text="Open", width=70),
+                "snippet":      st.column_config.TextColumn(T["col_snippet"],  width=300),
             },
             hide_index=True,
             height=500,
@@ -765,6 +835,40 @@ with tab_search:
                         )
                 else:
                     st.caption(T["ai_no_key"])
+
+                if has_embeddings():
+                    with st.expander(T["sim_header"]):
+                        _emb_row = run_query(
+                            "SELECT embedding FROM emails WHERE no = ?",
+                            [str(row_no)],
+                        )
+                        if _emb_row.empty or _emb_row.iloc[0, 0] is None:
+                            st.caption(T["sim_no_emb"])
+                        else:
+                            with st.spinner(T["sim_searching"]):
+                                _evec = _emb_row.iloc[0, 0]
+                                if hasattr(_evec, "tolist"):
+                                    _evec = _evec.tolist()
+                                _sim_df = run_query(
+                                    "SELECT no, subject, sendername, deliverytime, company_name, "
+                                    "array_cosine_similarity(embedding, ?::FLOAT[384]) AS sim_score "
+                                    "FROM emails WHERE no != ? AND embedding IS NOT NULL "
+                                    "ORDER BY sim_score DESC LIMIT 5",
+                                    [_evec, str(row_no)],
+                                )
+                            if not _sim_df.empty:
+                                st.dataframe(
+                                    _sim_df,
+                                    use_container_width=True,
+                                    hide_index=True,
+                                    column_config={
+                                        "subject":      st.column_config.TextColumn(T["col_subject"],  width=260),
+                                        "sendername":   st.column_config.TextColumn(T["col_sender"],   width=140),
+                                        "deliverytime": st.column_config.TextColumn(T["col_received"], width=140),
+                                        "company_name": st.column_config.TextColumn(T["col_company"],  width=130),
+                                        "sim_score":    st.column_config.NumberColumn(T["col_sim_score"], format="%.4f"),
+                                    },
+                                )
 
                 primary_case_val = r.get("primary_case") if hasattr(r, "get") else r["primary_case"]
                 if primary_case_val and str(primary_case_val).strip() not in ("", "None", "nan"):
@@ -1202,8 +1306,16 @@ with tab_semantic:
         use_hybrid = st.checkbox(T["sem_hybrid"], value=True)
 
         if sem_query and st.button(T["sem_run"]):
+            _embed_query = sem_query
+            if any('가' <= c <= '힣' for c in sem_query):
+                if google_api_key:
+                    with st.spinner(T["sem_translate"]):
+                        _embed_query = _translate_ko_to_en(sem_query, google_api_key)
+                    st.caption(f"{T['sem_translated']}: **{_embed_query}**")
+                else:
+                    st.caption(T["sem_no_key_translate"])
             with st.spinner(T["sem_embedding"]):
-                qvec = get_query_embedding(sem_query)
+                qvec = get_query_embedding(_embed_query)
 
             if qvec:
                 with st.spinner(T["sem_searching"]):
