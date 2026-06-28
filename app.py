@@ -546,6 +546,23 @@ def _clean_month(series: pd.Series) -> pd.Series:
     return series.astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
 
 
+def _clean_id_value(value) -> str:
+    if pd.isna(value):
+        return ""
+    text = str(value).strip()
+    if text.endswith(".0"):
+        return text[:-2]
+    return text
+
+
+def _clean_id_columns(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    for col in ["no", "month"]:
+        if col in out.columns:
+            out[col] = out[col].apply(_clean_id_value)
+    return out
+
+
 # ── 필터 옵션 로드 ────────────────────────────────────────────────
 @st.cache_data(ttl=3600)
 def load_filter_options():
@@ -1457,11 +1474,14 @@ with tab_search:
             columns=["bm25_norm", "vector_norm", "entity_match", "recency_score", "decision_signal"],
             errors="ignore",
         )
+        df_table = _clean_id_columns(df_table)
 
         st.dataframe(
             df_table,
             use_container_width=True,
             column_config={
+                "no":           st.column_config.TextColumn("no", width=70),
+                "month":        st.column_config.TextColumn("month", width=90),
                 "subject":      st.column_config.TextColumn(T["col_subject"],  width=280),
                 "senderemail":  st.column_config.TextColumn(T["col_sender"],   width=180),
                 "deliverytime": st.column_config.TextColumn(T["col_received"], width=140),
@@ -1501,10 +1521,13 @@ with tab_search:
                         if c in _df_refined.columns
                     ]
                 )
+                _df_ref_table = _clean_id_columns(_df_ref_table)
                 st.dataframe(
                     _df_ref_table,
                     use_container_width=True,
                     column_config={
+                        "no":           st.column_config.TextColumn("no", width=70),
+                        "month":        st.column_config.TextColumn("month", width=90),
                         "subject":      st.column_config.TextColumn(T["col_subject"],  width=280),
                         "senderemail":  st.column_config.TextColumn(T["col_sender"],   width=180),
                         "deliverytime": st.column_config.TextColumn(T["col_received"], width=140),
@@ -1621,16 +1644,17 @@ with tab_search:
             T["select_email"],
             options=df["no"].tolist()[:50],
             format_func=lambda x: (
-                f"#{x}  "
+                f"#{_clean_id_value(x)}  "
                 + (df.loc[df["no"] == x, "subject"].values[0][:60]
                    if not df.loc[df["no"] == x, "subject"].empty else "")
             ),
         )
         if row_no:
+            row_no_key = _clean_id_value(row_no)
             body_df = run_query(
                 "SELECT subject, sendername, senderemail, deliverytime, "
                 "recipientto, plaintextbody, linkkey, primary_case FROM emails WHERE no = ?",
-                [str(row_no)],
+                [row_no_key],
             )
             if not body_df.empty:
                 r = body_df.iloc[0]
@@ -1696,7 +1720,7 @@ with tab_search:
                                     "array_cosine_similarity(embedding, ?::FLOAT[384]) AS sim_score "
                                     "FROM emails WHERE no != ? AND embedding IS NOT NULL "
                                     "ORDER BY sim_score DESC LIMIT 5",
-                                    [_evec, str(row_no)],
+                                    [_evec, row_no_key],
                                 )
                             if not _sim_df.empty:
                                 st.dataframe(
@@ -1750,7 +1774,7 @@ with tab_search:
                         _sender_df = run_query(
                             "SELECT no, deliverytime, subject, hvdc_cases FROM emails "
                             "WHERE senderemail = ? AND no != ? ORDER BY deliverytime DESC LIMIT 20",
-                            [str(_sender_email_val), str(row_no)],
+                            [str(_sender_email_val), row_no_key],
                         )
                         if not _sender_df.empty:
                             st.caption(f"**{len(_sender_df)}건**")
@@ -1768,7 +1792,7 @@ with tab_search:
         st.divider()
         st.download_button(
             T["csv_download"],
-            data=df.to_csv(index=False).encode("utf-8-sig"),
+            data=_clean_id_columns(df).to_csv(index=False).encode("utf-8-sig"),
             file_name="hvdc_email_search_result.csv",
             mime="text/csv",
         )
