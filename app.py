@@ -701,6 +701,46 @@ def _is_korean(text: str) -> bool:
     return any("가" <= ch <= "힣" for ch in text)
 
 
+# HVDC 물류 도메인 용어 사전 — 한국어 키워드 → (한국어 변형들, 영어 BM25 동의어들)
+# HVDC 어휘는 고정 집합이므로 결정론적 사전이 Gemini 직역보다 정확·무료·즉시.
+# 운영 빈도순. 미스 시 호출부에서 원문 직역으로 폴백.
+HVDC_GLOSSARY: dict[str, tuple[list[str], list[str]]] = {
+    "기성":   (["기성", "기성금", "기성청구", "기성고"], ["progress payment", "interim payment", "IPC"]),
+    "통관":   (["통관", "수입통관", "세관"],              ["customs clearance", "customs"]),
+    "선적":   (["선적", "적재", "본선적재"],              ["shipment", "shipping", "loading"]),
+    "하역":   (["하역", "양하", "양륙"],                  ["discharge", "unloading", "offloading"]),
+    "지연":   (["지연", "딜레이", "지체"],                ["delay", "delayed", "demurrage", "detention"]),
+    "정산":   (["정산", "정산서", "비용정산"],            ["settlement", "reconciliation"]),
+    "검사":   (["검사", "검수", "수입검사"],              ["inspection", "MRR", "material receiving report"]),
+    "송장":   (["송장", "인보이스", "청구서"],            ["invoice", "billing"]),
+    "납품":   (["납품", "납기", "납품서"],                ["delivery", "delivery note", "DN"]),
+    "발주":   (["발주", "구매발주", "발주서"],            ["purchase order", "PO"]),
+    "운송":   (["운송", "수송", "내륙운송"],              ["transport", "transportation", "trucking"]),
+    "보관":   (["보관", "창고보관", "장치"],              ["storage", "warehouse", "warehousing"]),
+    "통보":   (["통보", "통지", "공지"],                  ["notice", "notification"]),
+    "승인":   (["승인", "결재", "허가"],                  ["approval", "approved"]),
+    "계약":   (["계약", "계약서", "약정"],                ["contract", "agreement"]),
+    "견적":   (["견적", "견적서", "가격"],                ["quotation", "quote"]),
+    "포장":   (["포장", "패킹", "포장명세"],              ["packing", "packing list"]),
+    "통선":   (["통선", "부선", "바지"],                  ["barge", "feeder vessel"]),
+    "중량물": (["중량물", "초중량", "대형화물"],          ["heavy lift", "heavy cargo", "oversized"]),
+    "면장":   (["면장", "수입면장", "통관면장"],          ["customs declaration", "bill of entry", "BOE"]),
+}
+
+
+def _glossary_expand(ko_query: str) -> tuple[list[str], list[str]]:
+    """한국어 쿼리 → (한국어 변형들, 영어 BM25 동의어들).
+
+    사전 매칭(부분 포함) 시 변형·영어 동의어 반환.
+    매칭 없으면 ([원문], []) — 호출부는 영어 비어있으면 ILIKE 단독으로 폴백.
+    """
+    q = ko_query.strip()
+    for key, (ko_variants, en_terms) in HVDC_GLOSSARY.items():
+        if key in q:
+            return (ko_variants, en_terms)
+    return ([q], [])
+
+
 def _cluster_emails(df):
     """Keyword-based issue clustering — no API cost."""
     _CLUSTERS = {
@@ -933,27 +973,47 @@ with tab_search:
     PARAMS: list = []
 
     google_api_key = st.secrets.get("google_api_key", "")
-    bm25_query = query_text
-    ko_raw_query = ""  # Korean original for parallel ILIKE search
-    if query_text and google_api_key and _is_korean(query_text):
+    bm25_query   = query_text
+    ko_raw_query = ""        # Korean input flag → recency ordering
+    ko_en_terms  = []        # glossary English domain terms used (for badge)
+    search_mode  = ""        # status badge: glossary / ilike / bm25 / rewrite
+    q_clause     = ""        # query WHERE clause (kept separate from filters for fallback)
+    q_params: list = []      # params bound to q_clause
+    if query_text and _is_korean(query_text):
+        # Korean: glossary-driven bilingual search (no Gemini literal translation).
+        # all-MiniLM is English-only & literal "기성→established" hits company names,
+        # so we match Korean variants by ILIKE and add PRECISE English domain BM25.
+        ko_variants, ko_en_terms = _glossary_expand(query_text)
         ko_raw_query = query_text
-        with st.spinner(T["sem_translate"]):
-            bm25_query = _translate_ko_to_en(query_text, google_api_key)
-
-    if bm25_query and use_query_rewrite and google_api_key:
-        with st.spinner(T["sem_translate"]):
-            bm25_query = _rewrite_query(bm25_query, google_api_key)
-
-    if bm25_query:
-        if ko_raw_query:
-            # Korean input: ILIKE on Korean original text.
-            # BM25 FTS does not index Korean chars; English translation ("established"
-            # for "기성") hits unrelated company names — skip BM25 filter for Korean.
-            WHERE.append("(subject ILIKE ? OR plaintextbody ILIKE ?)")
-            PARAMS.extend([f"%{ko_raw_query}%", f"%{ko_raw_query}%"])
+        ilike_clauses = []
+        ko_ilike_params: list = []
+        for v in ko_variants:
+            ilike_clauses.append("(subject ILIKE ? OR plaintextbody ILIKE ?)")
+            ko_ilike_params.extend([f"%{v}%", f"%{v}%"])
+        ko_ilike_expr = " OR ".join(ilike_clauses)   # Korean-variant match (no BM25)
+        q_params.extend(ko_ilike_params)
+        ko_where = ko_ilike_expr
+        if ko_en_terms:
+            en_join = " OR ".join(ko_en_terms)
+            ko_where = f"({ko_where}) OR fts_main_emails.match_bm25(no, ?) IS NOT NULL"
+            q_params.append(en_join)
+            bm25_query  = en_join          # caption/badge shows domain terms used
+            search_mode = "glossary"
         else:
-            WHERE.append("fts_main_emails.match_bm25(no, ?) IS NOT NULL")
-            PARAMS.append(bm25_query)
+            search_mode = "ilike"
+        q_clause = f"({ko_where})"
+    else:
+        # English (or empty): optional synonym rewrite, then BM25
+        if bm25_query and use_query_rewrite and google_api_key:
+            with st.spinner(T["sem_translate"]):
+                bm25_query = _rewrite_query(bm25_query, google_api_key)
+                if bm25_query != query_text:
+                    search_mode = "rewrite"
+        if bm25_query:
+            q_clause = "fts_main_emails.match_bm25(no, ?) IS NOT NULL"
+            q_params.append(bm25_query)
+            if not search_mode:
+                search_mode = "bm25"
 
     if sel_months:
         ph = ", ".join(["?"] * len(sel_months))
@@ -978,26 +1038,70 @@ with tab_search:
         WHERE.append('"hvdc_cases" ILIKE ?')
         PARAMS.append(f"%{case_filter}%")
 
-    where_clause = ("WHERE " + " AND ".join(WHERE)) if WHERE else ""
+    col_list = ", ".join(f'"{c}"' for c in COLS_SHOW)
 
-    if bm25_query and not ko_raw_query:
-        # English BM25 search: rank by relevance score
-        score_col    = ", fts_main_emails.match_bm25(no, ?) AS bm25_score"
-        order_by     = "ORDER BY bm25_score DESC"
-        extra_params = [bm25_query]
-    else:
-        # Korean ILIKE search (or no query): rank by recency
-        score_col    = ""
-        order_by     = 'ORDER BY "deliverytime" DESC'
-        extra_params = []
+    def _run_search(qc: str, qp: list, *, bm25_order_term: str = "",
+                    select_extra: str = "", select_params: list | None = None,
+                    order_by: str = ""):
+        """Compose query-clause + filters and run. Returns (df, count, where_clause)."""
+        select_params = select_params or []
+        where_parts = ([qc] if qc else []) + WHERE
+        wc = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+        if order_by:
+            sc, ob, ep = select_extra, order_by, select_params
+        elif bm25_order_term:
+            sc = ", fts_main_emails.match_bm25(no, ?) AS bm25_score"
+            ob = "ORDER BY bm25_score DESC"
+            ep = [bm25_order_term]
+        else:
+            sc = ""
+            ob = 'ORDER BY "deliverytime" DESC'
+            ep = []
+        sql = f"SELECT {col_list}{sc} FROM emails {wc} {ob} LIMIT ?"
+        params = ep + qp + PARAMS + [max_rows]
+        cnt = count_emails(wc, tuple(qp + PARAMS))
+        d = run_query(sql, params if params else None)
+        return d, cnt, wc
 
-    col_list   = ", ".join(f'"{c}"' for c in COLS_SHOW)
-    sql        = f"SELECT {col_list}{score_col} FROM emails {where_clause} {order_by} LIMIT ?"
-    all_params = PARAMS + extra_params + [max_rows]
-
+    # Stage 1 — primary search
     with st.spinner(T["searching"]):
-        total_cnt = count_emails(where_clause, tuple(PARAMS))
-        df        = run_query(sql, all_params if all_params else None)
+        if search_mode == "glossary":
+            # Korean-variant exact matches rank first (tier 0), English domain BM25
+            # matches below (tier 1); recency within each tier. Preserves precision.
+            _tier = f", CASE WHEN ({ko_ilike_expr}) THEN 0 ELSE 1 END AS ko_tier"
+            df, total_cnt, where_clause = _run_search(
+                q_clause, q_params,
+                select_extra=_tier, select_params=list(ko_ilike_params),
+                order_by='ORDER BY ko_tier ASC, "deliverytime" DESC',
+            )
+        else:
+            _bm25_order = bm25_query if (bm25_query and not ko_raw_query) else ""
+            df, total_cnt, where_clause = _run_search(
+                q_clause, q_params, bm25_order_term=_bm25_order)
+
+    # Phase C — zero-result fallback chain (pure SQL, no API). Escalate only on empty.
+    if df.empty and query_text:
+        import re as _re_fb
+        _tokens = [t for t in _re_fb.split(r"\s+", query_text.strip()) if len(t) >= 3]
+        # Stage 2 — English multi-token BM25 OR (recall for AND-strict multi-word queries)
+        if not ko_raw_query and len(_tokens) >= 2:
+            _or = " OR ".join(_tokens[:4])
+            _d, _c, _wc = _run_search(
+                "fts_main_emails.match_bm25(no, ?) IS NOT NULL", [_or],
+                bm25_order_term=_or,
+            )
+            if not _d.empty:
+                df, total_cnt, where_clause, search_mode, bm25_query = _d, _c, _wc, "token", _or
+        # Stage 3 — broad ILIKE substring (subject + body) on each token
+        if df.empty:
+            _toks = _tokens or ([ko_raw_query] if ko_raw_query else [query_text])
+            _cl, _pa = [], []
+            for t in _toks[:4]:
+                _cl.append("(subject ILIKE ? OR plaintextbody ILIKE ?)")
+                _pa.extend([f"%{t}%", f"%{t}%"])
+            _d, _c, _wc = _run_search("(" + " OR ".join(_cl) + ")", _pa)
+            if not _d.empty:
+                df, total_cnt, where_clause, search_mode = _d, _c, _wc, "ilike_fb"
 
     c1, c2, c3 = st.columns(3)
     c1.metric(T["metric_match"], f"{total_cnt:,}", help=T["metric_match_help"])
@@ -1005,10 +1109,16 @@ with tab_search:
     c3.metric(T["metric_total"], f"{get_total_emails():,}", help=T["metric_total_help"])
 
     st.divider()
-    if ko_raw_query:
-        st.caption(f"한글 ILIKE 검색: `{ko_raw_query}` (최신순 정렬)")
-    elif bm25_query != query_text:
-        st.caption(f"{T['bm25_translate']} `{bm25_query}`")
+    if search_mode == "glossary":
+        st.caption(f"🎯 도메인 검색: `{ko_raw_query}` (한글 정확매칭 우선) + 영어 `{' OR '.join(ko_en_terms)}` 회수")
+    elif search_mode == "ilike":
+        st.caption(f"🔍 한글 검색: `{ko_raw_query}` (최신순 정렬)")
+    elif search_mode == "rewrite":
+        st.caption(f"🔍 확장 검색: `{bm25_query}`")
+    elif search_mode == "token":
+        st.caption(f"🧩 토큰 분리 검색(폴백): `{bm25_query}`")
+    elif search_mode == "ilike_fb":
+        st.caption(f"⚠ 부분 일치(폴백): `{query_text}` substring")
 
     if df.empty:
         any_filter = bool(query_text or sel_months or sel_sites or sel_stages
@@ -1019,6 +1129,7 @@ with tab_search:
             st.info(T["no_results_empty"])
     else:
         df_show = df.copy()
+        df_show = df_show.drop(columns=["ko_tier"], errors="ignore")  # internal sort key
         if query_text and not df_show.empty:
             _nos = [str(n) for n in df_show["no"].tolist()]
             _ph = ", ".join(["?"] * len(_nos))
