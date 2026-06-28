@@ -157,6 +157,10 @@ _T = {
         "sem_translate": "한국어 감지 → 영어로 번역 중...",
         "sem_translated": "번역된 검색어",
         "sem_no_key_translate": "Gemini API 키 없음 — 원문으로 검색합니다.",
+        "bm25_translate": "한국어 감지 → 영어 번역 후 키워드 검색:",
+        "btn_bulk_summary": "AI 일괄 요약 (상위 10건)",
+        "bulk_summary_spinner": "Gemini 분석 중...",
+        "bulk_summary_header": "검색 결과 AI 요약",
     },
     "en": {
         # page
@@ -281,6 +285,10 @@ _T = {
         "sem_translate": "Korean detected — translating to English...",
         "sem_translated": "Translated query",
         "sem_no_key_translate": "No Gemini key — searching with original query.",
+        "bm25_translate": "Korean detected → translated for FTS:",
+        "btn_bulk_summary": "AI Summary (Top 10)",
+        "bulk_summary_spinner": "Gemini summarizing...",
+        "bulk_summary_header": "Search Results AI Summary",
     },
 }
 
@@ -540,6 +548,10 @@ def _translate_ko_to_en(text: str, api_key: str) -> str:
         return text
 
 
+def _is_korean(text: str) -> bool:
+    return any("가" <= ch <= "힣" for ch in text)
+
+
 # ── 언어 단축 참조 (전체 앱에서 사용) ────────────────────────────────
 T = _T[st.session_state.lang]
 
@@ -684,9 +696,15 @@ with tab_search:
     WHERE: list[str] = []
     PARAMS: list = []
 
-    if query_text:
+    google_api_key = st.secrets.get("google_api_key", "")
+    bm25_query = query_text
+    if query_text and google_api_key and _is_korean(query_text):
+        with st.spinner(T["sem_translate"]):
+            bm25_query = _translate_ko_to_en(query_text, google_api_key)
+
+    if bm25_query:
         WHERE.append("fts_main_emails.match_bm25(no, ?) IS NOT NULL")
-        PARAMS.append(query_text)
+        PARAMS.append(bm25_query)
 
     if sel_months:
         ph = ", ".join(["?"] * len(sel_months))
@@ -713,10 +731,10 @@ with tab_search:
 
     where_clause = ("WHERE " + " AND ".join(WHERE)) if WHERE else ""
 
-    if query_text:
+    if bm25_query:
         score_col    = ", fts_main_emails.match_bm25(no, ?) AS bm25_score"
         order_by     = "ORDER BY bm25_score DESC"
-        extra_params = [query_text]
+        extra_params = [bm25_query]
     else:
         score_col    = ""
         order_by     = 'ORDER BY "deliverytime" DESC'
@@ -736,6 +754,8 @@ with tab_search:
     c3.metric(T["metric_total"], f"{get_total_emails():,}", help=T["metric_total_help"])
 
     st.divider()
+    if bm25_query != query_text:
+        st.caption(f"{T['bm25_translate']} `{bm25_query}`")
 
     if df.empty:
         any_filter = bool(query_text or sel_months or sel_sites or sel_stages
@@ -758,7 +778,7 @@ with tab_search:
                 if not _body_batch.empty else {}
             )
             df_show["snippet"] = df_show["no"].apply(
-                lambda n: _extract_snippet(_bmap.get(str(n), ""), query_text) or T["snip_none"]
+                lambda n: _extract_snippet(_bmap.get(str(n), ""), bm25_query) or T["snip_none"]
             )
         if "linkkey" in df_show.columns:
             df_show["pdf_link"] = df_show["linkkey"].apply(
@@ -784,6 +804,27 @@ with tab_search:
             hide_index=True,
             height=500,
         )
+
+        if google_api_key and not df_show.empty:
+            if st.button(T["btn_bulk_summary"], key="bulk_summary"):
+                with st.spinner(T["bulk_summary_spinner"]):
+                    _rows = df_show.head(10)
+                    _lines = [
+                        f"{i+1}. [{r['subject']}] {r.get('snippet', r.get('sendername', ''))}"
+                        for i, (_, r) in enumerate(_rows.iterrows())
+                    ]
+                    _prompt = (
+                        f"다음 HVDC 프로젝트 이메일 {len(_lines)}건의 핵심 내용을 한국어로 3줄로 요약하세요. "
+                        f"공통 주제, 주요 이슈, 액션 아이템을 중심으로:\n\n" + "\n".join(_lines)
+                    )
+                    try:
+                        from google import genai as _genai
+                        _client = _genai.Client(api_key=google_api_key)
+                        _resp = _client.models.generate_content(model="gemini-2.5-flash", contents=_prompt)
+                        st.subheader(T["bulk_summary_header"])
+                        st.info(_resp.text)
+                    except Exception as _e:
+                        st.warning(f"Gemini 오류: {_e}")
 
         st.subheader(T["email_detail"])
         row_no = st.selectbox(
@@ -819,7 +860,6 @@ with tab_search:
                     for _label, _url in DRIVE_FOLDERS:
                         st.markdown(f"- [{_label}]({_url})")
 
-                google_api_key = st.secrets.get("google_api_key", "")
                 if google_api_key:
                     if st.button(T["btn_ai"], key=f"gemini_{row_no}"):
                         with st.spinner(T["ai_spinner"]):
