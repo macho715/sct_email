@@ -490,9 +490,8 @@ input, textarea, [data-testid="stTextInput"] input,
 .stButton > button { min-height: 44px !important; padding: 0 1rem !important; }
 .stTabs [role="tab"] { min-height: 44px !important; }
 [data-testid="stDownloadButton"] > button { min-height: 44px !important; }
-/* P5: Mobile layout — hide sidebar, single-column content */
+/* P5: Mobile layout — keep sidebar controls available on phones */
 @media (max-width: 768px) {
-    section[data-testid="stSidebar"] { display: none !important; }
     [data-testid="block-container"] { padding: 0.75rem 0.75rem 1rem !important; }
     .hvdc-header { padding: 12px 14px !important; }
     .hvdc-header-title { font-size: 1.1rem !important; }
