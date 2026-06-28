@@ -633,6 +633,25 @@ def _extract_entities(text: str) -> dict:
     return found
 
 
+def _rewrite_query(text: str, api_key: str) -> str:
+    """Expand logistics query with HVDC domain synonyms via Gemini Flash."""
+    try:
+        from google import genai
+        client = genai.Client(api_key=api_key)
+        resp = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=(
+                "You are an HVDC logistics email search assistant. "
+                "Expand this search query with relevant synonyms and acronyms "
+                "(BL, DEM, DET, DN, MRR, MOSB, DSV, Mammoet, ADNOC, AGI, DAS). "
+                "Return ONLY the expanded query, no explanation:\n\n" + text
+            ),
+        )
+        return resp.text.strip()
+    except Exception:
+        return text
+
+
 def _translate_ko_to_en(text: str, api_key: str) -> str:
     try:
         from google import genai
@@ -752,6 +771,8 @@ with st.sidebar:
         case_filter   = st.text_input(T["case_filter_label"],   placeholder=T["case_filter_ph"])
 
     max_rows = st.slider(T["max_rows"], 50, 2000, 200, 50)
+    _qr_api = st.secrets.get("google_api_key", "")
+    use_query_rewrite = bool(_qr_api) and st.checkbox(T["query_rewrite"], value=False)
 
     st.divider()
 
@@ -810,6 +831,10 @@ with tab_search:
     if query_text and google_api_key and _is_korean(query_text):
         with st.spinner(T["sem_translate"]):
             bm25_query = _translate_ko_to_en(query_text, google_api_key)
+
+    if bm25_query and use_query_rewrite and google_api_key:
+        with st.spinner(T["sem_translate"]):
+            bm25_query = _rewrite_query(bm25_query, google_api_key)
 
     if bm25_query:
         WHERE.append("fts_main_emails.match_bm25(no, ?) IS NOT NULL")
