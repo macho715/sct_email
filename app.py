@@ -315,6 +315,8 @@ st.set_page_config(
 # ── 언어 상태 초기화 ──────────────────────────────────────────────────
 if "lang" not in st.session_state:
     st.session_state.lang = "ko"
+if "search_history" not in st.session_state:
+    st.session_state.search_history = []
 
 # ── 비밀번호 보호 ─────────────────────────────────────────────────────
 _PASSWORD = st.secrets.get("password", "")
@@ -945,6 +947,38 @@ with tab_search:
             height=500,
         )
 
+        _refine_text = st.text_input(
+            T["refine_placeholder"],
+            key="refine_input",
+            placeholder="예: 2025, DSV, MOSB",
+        )
+        if _refine_text and not df_show.empty:
+            _cols = ["subject", "sendername", "senderemail", "deliverytime",
+                     "company_name", "hvdc_cases", "month"]
+            _mask = pd.Series([False] * len(df_show), index=df_show.index)
+            for _col in _cols:
+                if _col in df_show.columns:
+                    _mask |= df_show[_col].astype(str).str.contains(
+                        _refine_text, case=False, na=False
+                    )
+            _df_refined = df_show[_mask]
+            st.caption(f"🔍 **'{_refine_text}'** — {len(_df_refined)}건")
+            if not _df_refined.empty:
+                _df_ref_table = _df_refined.drop(
+                    columns=[c for c in ["snippet", "pdf_link"] if c in _df_refined.columns]
+                )
+                st.dataframe(
+                    _df_ref_table,
+                    use_container_width=True,
+                    column_config={
+                        "subject":      st.column_config.TextColumn(T["col_subject"],  width=280),
+                        "senderemail":  st.column_config.TextColumn(T["col_sender"],   width=180),
+                        "deliverytime": st.column_config.TextColumn(T["col_received"], width=140),
+                    },
+                    hide_index=True,
+                    height=300,
+                )
+
         if _snippets:
             with st.expander(T["snip_header"], expanded=True):
                 for _, row in df_show.head(20).iterrows():
@@ -1094,6 +1128,28 @@ with tab_search:
                                 height=200,
                                 column_config={
                                     "subject": st.column_config.TextColumn(T["col_subject"], width=300),
+                                },
+                            )
+
+                _sender_email_val = r.get("senderemail") if hasattr(r, "get") else r["senderemail"]
+                _sender_name_val = r.get("sendername", "") if hasattr(r, "get") else str(r["sendername"])
+                if _sender_email_val and str(_sender_email_val).strip() not in ("", "None", "nan"):
+                    with st.expander(f"{T['btn_sender_history']}: {_sender_name_val}"):
+                        _sender_df = run_query(
+                            "SELECT no, deliverytime, subject, hvdc_cases FROM emails "
+                            "WHERE senderemail = ? AND no != ? ORDER BY deliverytime DESC LIMIT 20",
+                            [str(_sender_email_val), str(row_no)],
+                        )
+                        if not _sender_df.empty:
+                            st.caption(f"**{len(_sender_df)}건**")
+                            st.dataframe(
+                                _sender_df,
+                                use_container_width=True,
+                                hide_index=True,
+                                height=250,
+                                column_config={
+                                    "subject": st.column_config.TextColumn(T["col_subject"], width=300),
+                                    "hvdc_cases": st.column_config.TextColumn(T["col_cases"], width=150),
                                 },
                             )
 
