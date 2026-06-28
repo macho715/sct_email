@@ -988,6 +988,72 @@ def _pdf_parts(linkkey) -> list:
     return out
 
 
+def _drive_items_for_email(*values) -> list[dict]:
+    """Find exact PDF matches by linkkey or Drive file URL in email fields."""
+    import re
+
+    links = _drive_links()
+    candidates: list[str] = []
+    drive_ids: list[str] = []
+    for value in values:
+        if value is None or pd.isna(value):
+            continue
+        text = str(value).strip()
+        if text.lower() in ("", "none", "nan", "null"):
+            continue
+        candidates.append(text)
+        candidates.extend(re.findall(r"\b[0-9a-fA-F]{12}\b", text))
+        drive_ids.extend(
+            re.findall(
+                r"(?:drive\.google\.com/file/d/|[?&]id=)([A-Za-z0-9_-]{20,})",
+                text,
+            )
+        )
+
+    seen_keys = set()
+    for key in candidates:
+        clean_key = key.strip()
+        if clean_key in seen_keys:
+            continue
+        seen_keys.add(clean_key)
+        items = links.get(clean_key)
+        if items:
+            return items
+
+    out = []
+    seen_ids = set()
+    for file_id in drive_ids:
+        if file_id in seen_ids:
+            continue
+        seen_ids.add(file_id)
+        out.append({"id": file_id, "title": "Google Drive PDF"})
+    return out
+
+
+def _pdf_parts_for_email(*values) -> list:
+    items = _drive_items_for_email(*values)
+    multi = len(items) > 1
+    out = []
+    for i, it in enumerate(items, 1):
+        file_id = str(it.get("id", "")).strip()
+        if not file_id:
+            continue
+        out.append((f"📄 PDF part {i}" if multi else "📄 PDF", _drive_view_url(file_id)))
+    return out
+
+
+def _pdf_download_parts_for_email(*values) -> list:
+    items = _drive_items_for_email(*values)
+    multi = len(items) > 1
+    out = []
+    for i, it in enumerate(items, 1):
+        file_id = str(it.get("id", "")).strip()
+        if not file_id:
+            continue
+        out.append((f"PDF part {i}" if multi else "PDF", _drive_download_url(file_id)))
+    return out
+
+
 def _drive_view_url(file_id: str) -> str:
     return f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
 
@@ -1768,18 +1834,12 @@ with tab_search:
                 col_a.markdown(f"**{T['col_sender']}**  \n{r['sendername']}  \n`{r['senderemail']}`")
                 col_b.markdown(f"**{T['col_received']}**  \n{r['deliverytime']}")
                 col_b.markdown(f"**{T['col_recipients']}**  \n{r['recipientto']}")
-                st.text_area(T["col_body"], value=r["plaintextbody"] or f"({T['col_body']} N/A)", height=380)
 
-                _entities = _extract_entities(str(r["plaintextbody"] or ""))
-                if _entities:
-                    st.markdown("**Entities:**")
-                    for _tag, _vals in _entities.items():
-                        st.markdown("`" + _tag + "` " + " ".join(f"`{v}`" for v in _vals))
-
+                _body_text = str(r["plaintextbody"] or "")
                 lk = r.get("linkkey") if hasattr(r, "get") else r["linkkey"]
-                pdf_parts = _pdf_parts(lk)
+                pdf_parts = _pdf_parts_for_email(lk, r.get("subject", ""), _body_text)
                 if pdf_parts:
-                    pdf_download_parts = _pdf_download_parts(lk)
+                    pdf_download_parts = _pdf_download_parts_for_email(lk, r.get("subject", ""), _body_text)
                     _label_multi = len(pdf_parts) > 1
                     for _i, ((_plabel, _purl), (_, _durl)) in enumerate(
                         zip(pdf_parts, pdf_download_parts),
@@ -1801,6 +1861,14 @@ with tab_search:
                     st.markdown(f"**{T['pdf_folder_alt']}**")
                     for _label, _url in DRIVE_FOLDERS:
                         st.markdown(f"- [{_label}]({_url})")
+
+                st.text_area(T["col_body"], value=_body_text or f"({T['col_body']} N/A)", height=380)
+
+                _entities = _extract_entities(_body_text)
+                if _entities:
+                    st.markdown("**Entities:**")
+                    for _tag, _vals in _entities.items():
+                        st.markdown("`" + _tag + "` " + " ".join(f"`{v}`" for v in _vals))
 
                 if google_api_key:
                     if st.button(T["btn_ai"], key=f"gemini_{row_no}"):
