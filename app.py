@@ -83,7 +83,9 @@ _T = {
         "email_detail": "본문 보기",
         "select_email": "메일 선택 (no 번호)",
         "btn_pdf": "첨부 PDF 열기 (Google Drive)",
+        "btn_pdf_download": "PDF 다운로드",
         "pdf_folder_alt": "첨부 PDF 폴더 (날짜별로 분할 저장):",
+        "pdf_quick_links": "PDF 빠른 열기",
         "btn_ai": "AI 요약 (Gemini)",
         "ai_spinner": "Gemini 분석 중...",
         "ai_no_key": "Gemini AI 요약을 사용하려면 Streamlit Secrets에 `google_api_key`를 추가하세요.",
@@ -226,7 +228,9 @@ _T = {
         "email_detail": "Email Detail",
         "select_email": "Select email (no)",
         "btn_pdf": "Open PDF Attachment (Google Drive)",
+        "btn_pdf_download": "Download PDF",
         "pdf_folder_alt": "PDF Attachment Folders (split by date):",
+        "pdf_quick_links": "PDF Quick Links",
         "btn_ai": "AI Summary (Gemini)",
         "ai_spinner": "Analysing with Gemini...",
         "ai_no_key": "Add `google_api_key` to Streamlit Secrets to enable Gemini AI summaries.",
@@ -962,14 +966,46 @@ def _pdf_parts(linkkey) -> list:
     multi = len(items) > 1
     out = []
     for i, it in enumerate(items, 1):
-        url = f"https://drive.google.com/file/d/{it['id']}/view"
+        file_id = str(it.get("id", "")).strip()
+        if not file_id:
+            continue
+        url = _drive_view_url(file_id)
         out.append((f"📄 PDF part {i}" if multi else "📄 PDF", url))
+    return out
+
+
+def _drive_view_url(file_id: str) -> str:
+    return f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
+
+
+def _drive_download_url(file_id: str) -> str:
+    return f"https://drive.google.com/uc?export=download&id={file_id}"
+
+
+def _pdf_download_parts(linkkey) -> list:
+    """Direct Drive download links for mobile browsers that do not open viewer links."""
+    if not linkkey:
+        return []
+    items = _drive_links().get(str(linkkey).strip()) or []
+    multi = len(items) > 1
+    out = []
+    for i, it in enumerate(items, 1):
+        file_id = str(it.get("id", "")).strip()
+        if not file_id:
+            continue
+        out.append((f"PDF part {i}" if multi else "PDF", _drive_download_url(file_id)))
     return out
 
 
 def _pdf_url(linkkey) -> str:
     """First PDF link for a linkkey (table column), or '' when none."""
     parts = _pdf_parts(linkkey)
+    return parts[0][1] if parts else ""
+
+
+def _pdf_download_url(linkkey) -> str:
+    """First PDF download link for a linkkey (table column), or '' when none."""
+    parts = _pdf_download_parts(linkkey)
     return parts[0][1] if parts else ""
 
 
@@ -1455,13 +1491,32 @@ with tab_search:
                 )),
                 axis=1,
             )
+        pdf_quick_items = []
         if "linkkey" in df_show.columns:
+            for _, _row in df_show.head(20).iterrows():
+                _linkkey = _row.get("linkkey", "")
+                _parts = _pdf_parts(_linkkey)
+                if not _parts:
+                    continue
+                _subject = str(_row.get("subject", "") or "").strip()
+                if len(_subject) > 80:
+                    _subject = _subject[:77] + "..."
+                pdf_quick_items.append({
+                    "no": _clean_id_value(_row.get("no", "")),
+                    "subject": _subject,
+                    "view_parts": _parts,
+                    "download_parts": _pdf_download_parts(_linkkey),
+                })
             df_show["pdf_link"] = (
                 df_show["linkkey"].apply(_pdf_url).replace("", None)
+            )
+            df_show["pdf_download_link"] = (
+                df_show["linkkey"].apply(_pdf_download_url).replace("", None)
             )
             df_show = df_show.drop(columns=["linkkey"])
         else:
             df_show["pdf_link"] = None
+            df_show["pdf_download_link"] = None
 
         _snippets = {}
         if "snippet" in df_show.columns:
@@ -1489,10 +1544,41 @@ with tab_search:
                 "search_copilot_score": st.column_config.NumberColumn(T["col_score"], format="%.3f"),
                 "entities":     st.column_config.TextColumn(T["col_entities"], width=260),
                 "pdf_link":     st.column_config.LinkColumn(T["col_pdf"],      display_text="Open", width=70),
+                "pdf_download_link": st.column_config.LinkColumn(T["btn_pdf_download"], display_text="Download", width=110),
             },
             hide_index=True,
             height=500,
         )
+
+        if pdf_quick_items:
+            with st.expander(T["pdf_quick_links"], expanded=False):
+                for _item in pdf_quick_items:
+                    st.caption(f"#{_item['no']} - {_item['subject']}")
+                    for _i, (_view_part, _download_part) in enumerate(
+                        zip(_item["view_parts"], _item["download_parts"]),
+                        1,
+                    ):
+                        _view_label, _view_url = _view_part
+                        _, _download_url = _download_part
+                        _view_button = _view_label if len(_item["view_parts"]) > 1 else T["btn_pdf"]
+                        _download_button = (
+                            f"{T['btn_pdf_download']} {_i}"
+                            if len(_item["download_parts"]) > 1
+                            else T["btn_pdf_download"]
+                        )
+                        _view_col, _download_col = st.columns(2)
+                        _view_col.link_button(
+                            _view_button,
+                            _view_url,
+                            type="primary",
+                            width="stretch",
+                        )
+                        _download_col.link_button(
+                            _download_button,
+                            _download_url,
+                            width="stretch",
+                        )
+                    st.divider()
 
         _refine_text = st.text_input(
             T["refine_placeholder"],
@@ -1514,7 +1600,7 @@ with tab_search:
                 _df_ref_table = _df_refined.drop(
                     columns=[
                         c for c in [
-                            "snippet", "pdf_link", "bm25_norm", "vector_norm",
+                            "snippet", "pdf_link", "pdf_download_link", "bm25_norm", "vector_norm",
                             "entity_match", "recency_score", "decision_signal",
                         ]
                         if c in _df_refined.columns
@@ -1673,12 +1759,23 @@ with tab_search:
                 lk = r.get("linkkey") if hasattr(r, "get") else r["linkkey"]
                 pdf_parts = _pdf_parts(lk)
                 if pdf_parts:
+                    pdf_download_parts = _pdf_download_parts(lk)
                     _label_multi = len(pdf_parts) > 1
-                    for _i, (_plabel, _purl) in enumerate(pdf_parts):
-                        st.link_button(
+                    for _i, ((_plabel, _purl), (_, _durl)) in enumerate(
+                        zip(pdf_parts, pdf_download_parts),
+                        1,
+                    ):
+                        _view_col, _download_col = st.columns(2)
+                        _view_col.link_button(
                             _plabel if _label_multi else T["btn_pdf"],
                             _purl,
                             type="primary",
+                            width="stretch",
+                        )
+                        _download_col.link_button(
+                            f"{T['btn_pdf_download']} {_i}" if _label_multi else T["btn_pdf_download"],
+                            _durl,
+                            width="stretch",
                         )
                 else:
                     st.markdown(f"**{T['pdf_folder_alt']}**")
@@ -1705,7 +1802,7 @@ with tab_search:
                     with st.expander(T["sim_header"]):
                         _emb_row = run_query(
                             "SELECT embedding FROM emails WHERE no = ?",
-                            [str(row_no)],
+                            [row_no_key],
                         )
                         if _emb_row.empty or _emb_row.iloc[0, 0] is None:
                             st.caption(T["sim_no_emb"])
