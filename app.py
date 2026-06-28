@@ -167,6 +167,13 @@ _T = {
         "btn_similar": "유사 이메일 5건",
         "btn_timeline": "Case 타임라인",
         "btn_sender_history": "발신자 히스토리",
+        "btn_cluster": "이슈 유형 자동 분류",
+        "cluster_header": "이슈 유형 분포",
+        "btn_key_decisions": "핵심 결정 이메일 TOP 10",
+        "key_decisions_header": "핵심 의사결정 이메일",
+        "nl_query_placeholder": "자연어로 이메일 검색",
+        "nl_query_caption": "Gemini가 SQL로 변환합니다 (예: 2025년 3월 Mammoet MRR)",
+        "nl_query_header": "자연어 검색 결과",
     },
     "en": {
         # page
@@ -301,6 +308,13 @@ _T = {
         "btn_similar": "Similar Emails (5)",
         "btn_timeline": "Case Timeline",
         "btn_sender_history": "Sender History",
+        "btn_cluster": "Auto-Cluster by Issue Type",
+        "cluster_header": "Issue Type Distribution",
+        "btn_key_decisions": "Key Decision Emails TOP 10",
+        "key_decisions_header": "Key Decision Emails",
+        "nl_query_placeholder": "Natural language email search",
+        "nl_query_caption": "Gemini converts to SQL (e.g. MRR from Mammoet in March 2025)",
+        "nl_query_header": "Natural Language Query Results",
     },
 }
 
@@ -675,6 +689,83 @@ def _is_korean(text: str) -> bool:
     return any("가" <= ch <= "힣" for ch in text)
 
 
+def _cluster_emails(df):
+    """Keyword-based issue clustering — no API cost."""
+    _CLUSTERS = {
+        "DEM/DET": ["demurrage", "detention", "dem/det", " dem ", " det "],
+        "통관": ["customs", "clearance", "통관", "boe", "duty", "tariff"],
+        "선적지연": ["delay", "delayed", "postpone", "reschedule", "선적지연", "지연"],
+        "MOSB": ["mosb", "mother ship", "offshore"],
+        "MRR": ["mrr", "material receipt", "receiving report"],
+    }
+
+    def _label(row):
+        text = (str(row.get("subject", "")) + " " + str(row.get("hvdc_cases", ""))).lower()
+        for cluster, kws in _CLUSTERS.items():
+            if any(kw in text for kw in kws):
+                return cluster
+        return "기타"
+
+    df = df.copy()
+    df["issue_type"] = df.apply(_label, axis=1)
+    return df
+
+
+def _key_decisions_query():
+    """BM25 FTS for decision-related emails, no API cost."""
+    _kw = "승인 결정 confirm approve reject decision"
+    return run_query(
+        "SELECT no, deliverytime, subject, sendername, company_name, hvdc_cases "
+        "FROM emails "
+        "WHERE fts_main_emails.match_bm25(no, ?) IS NOT NULL "
+        "ORDER BY deliverytime DESC LIMIT 10",
+        [_kw],
+    )
+
+
+def _nl_to_sql(text: str, api_key: str):
+    """Natural language → parameterized SQL WHERE clause via Gemini Flash.
+    Returns (where_clause, params) or ('', []) on failure.
+    """
+    _ALLOWED_COLS = {
+        "deliverytime", "sendername", "senderemail", "company_name",
+        "site", "stage", "month", "hvdc_cases", "subject",
+    }
+    try:
+        import json as _json
+        import re as _re
+        from google import genai as _genai
+        _client = _genai.Client(api_key=api_key)
+        _sys = (
+            "SQL WHERE clause generator for HVDC email database. "
+            f"Allowed columns: {sorted(_ALLOWED_COLS)}. "
+            'Return JSON only: {"where": "col OPERATOR ?", "params": ["val"]}. '
+            "Use ? placeholders for all values. ILIKE for text (add % to param). "
+            "BETWEEN for date ranges with two params. "
+            'Impossible: {"where": "", "params": []}. No markdown.'
+        )
+        _resp = _client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=f"{_sys}\n\nRequest: {text}",
+        )
+        _m = _re.search(r'\{.*?\}', _resp.text.strip(), _re.DOTALL)
+        if not _m:
+            return "", []
+        _obj = _json.loads(_m.group())
+        _where = str(_obj.get("where", ""))
+        _params = list(_obj.get("params", []))
+        _where_upper = _where.upper()
+        for _bad in ["DROP", "DELETE", "INSERT", "UPDATE", "EXEC", "UNION", "ALTER", "--", ";"]:
+            if _bad in _where_upper:
+                return "", []
+        _first_col = _re.split(r'[\s(]', _where_upper.strip())[0]
+        if _first_col and _first_col not in {c.upper() for c in _ALLOWED_COLS}:
+            return "", []
+        return _where, _params
+    except Exception:
+        return "", []
+
+
 # ── 언어 단축 참조 (전체 앱에서 사용) ────────────────────────────────
 T = _T[st.session_state.lang]
 
@@ -1010,6 +1101,78 @@ with tab_search:
                         st.info(_resp.text)
                     except Exception as _e:
                         st.warning(f"Gemini 오류: {_e}")
+
+        # ── P3-1: Issue Clustering  ──────────────────────────────────
+        if not df_show.empty:
+            st.divider()
+            _col_cl, _col_kd = st.columns(2)
+            with _col_cl:
+                if st.button(T["btn_cluster"], key="p3_cluster", use_container_width=True):
+                    _clustered = _cluster_emails(df_show)
+                    _dist = _clustered["issue_type"].value_counts().reset_index()
+                    _dist.columns = ["이슈", "건수"]
+                    st.subheader(T["cluster_header"])
+                    st.dataframe(_dist, hide_index=True, use_container_width=True)
+                    st.bar_chart(_dist.set_index("이슈")["건수"])
+
+            # ── P3-2: Key Decision Finder ────────────────────────────
+            with _col_kd:
+                if st.button(T["btn_key_decisions"], key="p3_key_decisions", use_container_width=True):
+                    with st.spinner("조회 중..."):
+                        _kd_df = _key_decisions_query()
+                    st.subheader(T["key_decisions_header"])
+                    if not _kd_df.empty:
+                        st.dataframe(
+                            _kd_df,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "subject":      st.column_config.TextColumn(T["col_subject"],  width=260),
+                                "sendername":   st.column_config.TextColumn("Sender",          width=130),
+                                "deliverytime": st.column_config.TextColumn(T["col_received"], width=120),
+                                "hvdc_cases":   st.column_config.TextColumn(T["col_cases"],    width=140),
+                            },
+                        )
+                    else:
+                        st.info("결과 없음")
+
+        # ── P3-3: Natural Language Query ─────────────────────────────
+        if google_api_key:
+            _nl_text = st.text_input(
+                T["nl_query_placeholder"],
+                key="nl_query_input",
+                placeholder="예: 2025년 3월에 Mammoet가 보낸 MRR 관련 이메일",
+            )
+            st.caption(T["nl_query_caption"])
+            if _nl_text:
+                with st.spinner("Gemini SQL 변환 중..."):
+                    _nl_where, _nl_params = _nl_to_sql(_nl_text, google_api_key)
+                if _nl_where:
+                    _nl_sql = (
+                        f"SELECT no, deliverytime, subject, sendername, company_name, hvdc_cases "
+                        f"FROM emails WHERE {_nl_where} ORDER BY deliverytime DESC LIMIT 50"
+                    )
+                    try:
+                        _nl_result = run_query(_nl_sql, _nl_params if _nl_params else None)
+                        st.subheader(T["nl_query_header"])
+                        st.caption(f"WHERE `{_nl_where}`")
+                        if not _nl_result.empty:
+                            st.dataframe(
+                                _nl_result,
+                                use_container_width=True,
+                                hide_index=True,
+                                column_config={
+                                    "subject":      st.column_config.TextColumn(T["col_subject"],  width=280),
+                                    "sendername":   st.column_config.TextColumn("Sender",          width=140),
+                                    "deliverytime": st.column_config.TextColumn(T["col_received"], width=120),
+                                },
+                            )
+                        else:
+                            st.info("조건에 맞는 이메일이 없습니다.")
+                    except Exception as _nl_e:
+                        st.warning(f"쿼리 오류: {_nl_e}")
+                else:
+                    st.info("Gemini가 조건을 인식하지 못했습니다. 더 구체적으로 입력해 주세요.")
 
         st.subheader(T["email_detail"])
         row_no = st.selectbox(
