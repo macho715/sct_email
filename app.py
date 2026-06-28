@@ -154,15 +154,17 @@ _T = {
         "sim_no_emb": "임베딩 데이터 없음 — 유사 검색 불가",
         "sim_searching": "유사 이메일 검색 중...",
         "col_sim_score": "유사도",
-        "sem_translate": "한국어 감지 → 영어로 번역 중...",
+        "sem_translate": "검색어 확장 중...",
         "sem_translated": "번역된 검색어",
         "sem_no_key_translate": "Gemini API 키 없음 — 원문으로 검색합니다.",
         "bm25_translate": "한국어 감지 → 영어 번역 후 키워드 검색:",
         "btn_bulk_summary": "AI 일괄 요약 (상위 10건)",
         "bulk_summary_spinner": "Gemini 분석 중...",
         "bulk_summary_header": "검색 결과 AI 요약",
-        "query_rewrite": "쿼리 확장 사용 (Gemini)",
+        "query_rewrite": "쿼리 확장 사용 (사전 + Gemini 옵션)",
         "query_rewrite_caption": "확장된 검색어:",
+        "detected_entities": "감지된 항목",
+        "col_entities": "항목",
         "refine_placeholder": "결과 좁히기 (예: 2025년만, DSV만)",
         "btn_similar": "유사 이메일 5건",
         "btn_timeline": "Case 타임라인",
@@ -295,15 +297,17 @@ _T = {
         "sim_no_emb": "No embedding — similarity search unavailable.",
         "sim_searching": "Finding similar emails...",
         "col_sim_score": "Similarity",
-        "sem_translate": "Korean detected — translating to English...",
+        "sem_translate": "Expanding query...",
         "sem_translated": "Translated query",
         "sem_no_key_translate": "No Gemini key — searching with original query.",
         "bm25_translate": "Korean detected → translated for FTS:",
         "btn_bulk_summary": "AI Summary (Top 10)",
         "bulk_summary_spinner": "Gemini summarizing...",
         "bulk_summary_header": "Search Results AI Summary",
-        "query_rewrite": "Expand query (Gemini)",
+        "query_rewrite": "Expand query (glossary + optional Gemini)",
         "query_rewrite_caption": "Expanded query:",
+        "detected_entities": "Detected",
+        "col_entities": "Entities",
         "refine_placeholder": "Refine results (e.g. 2025 only, DSV only)",
         "btn_similar": "Similar Emails (5)",
         "btn_timeline": "Case Timeline",
@@ -612,33 +616,90 @@ def has_embeddings() -> bool:
         return False
 
 
+def _query_terms(query: str) -> list[str]:
+    import re
+    stopwords = {"or", "and", "the", "with", "for", "from"}
+    terms = []
+    for term in re.findall(r"[A-Za-z0-9가-힣][A-Za-z0-9가-힣/\-]{1,}", query or ""):
+        t = term.strip()
+        if len(t) > 2 and t.lower() not in stopwords:
+            terms.append(t)
+    return list(dict.fromkeys(terms))
+
+
+def _mask_sensitive_text(text: str) -> str:
+    import re
+    masked = re.sub(
+        r"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b",
+        "[email]",
+        text or "",
+        flags=re.IGNORECASE,
+    )
+    masked = re.sub(r"\+?\d[\d\s().\-]{7,}\d", "[phone/ref]", masked)
+    masked = re.sub(r"\b[A-Z]{1,5}[-:/ ]?\d{5,}[A-Z0-9\-/]*\b", "[ref]", masked, flags=re.IGNORECASE)
+    masked = re.sub(r"\b\d{8,}\b", "[ref]", masked)
+    return masked
+
+
+def _mask_entity_value(tag: str, value: str) -> str:
+    if tag in {"Ref", "BL", "PO", "Case"}:
+        return _mask_sensitive_text(value)
+    return str(value).strip()
+
+
 def _extract_snippet(body: str, query: str, context_chars: int = 150) -> str:
     if not body or not query:
         return ""
-    body_lower = body.lower()
-    words = [w for w in query.lower().split() if len(w) > 2]
-    best_pos = -1
-    for w in words:
-        pos = body_lower.find(w)
-        if pos != -1 and (best_pos == -1 or pos < best_pos):
-            best_pos = pos
-    if best_pos == -1:
-        return ""
-    match_len = len(words[0]) if words else 4
-    start = max(0, best_pos - context_chars)
-    end = min(len(body), best_pos + match_len + context_chars)
     import re
-    snippet = body[start:end].replace("\n", " ").replace("\r", " ").strip()
-    for w in words:
-        snippet = re.sub(f"(?i)({re.escape(w)})", r"**\1**", snippet)
-    return ("…" if start > 0 else "") + snippet + ("…" if end < len(body) else "")
+    terms = _query_terms(query)
+    if not terms:
+        return ""
+
+    compact = re.sub(r"\s+", " ", str(body)).strip()
+    sentences = [
+        s.strip()
+        for s in re.split(r"(?<=[.!?。！？])\s+|[\r\n]+", compact)
+        if s.strip()
+    ]
+    if not sentences:
+        sentences = [compact]
+
+    scored = []
+    lower_terms = [t.lower() for t in terms]
+    for idx, sentence in enumerate(sentences):
+        sent_lower = sentence.lower()
+        score = sum(2 if t in sent_lower else 0 for t in lower_terms)
+        if score:
+            score += max(0, 2 - idx * 0.1)
+            scored.append((score, idx, sentence))
+
+    if scored:
+        picked = [s for _, _, s in sorted(scored, key=lambda x: (-x[0], x[1]))[:3]]
+        snippet = " ".join(picked)
+    else:
+        body_lower = compact.lower()
+        best_pos = min(
+            [body_lower.find(t) for t in lower_terms if body_lower.find(t) != -1],
+            default=-1,
+        )
+        if best_pos == -1:
+            return ""
+        start = max(0, best_pos - context_chars)
+        end = min(len(compact), best_pos + context_chars)
+        snippet = ("..." if start > 0 else "") + compact[start:end] + ("..." if end < len(compact) else "")
+
+    snippet = _mask_sensitive_text(snippet)
+    for term in terms:
+        snippet = re.sub(f"(?i)({re.escape(term)})", r"**\1**", snippet)
+    return snippet
 
 
 _ENTITY_PATTERNS = {
-    "BL":   r'\bBL[-\s]?\d{6,}\b|\bBILL OF LADING\b',
-    "PO":   r'\bPO[-\s]?\d{5,}\b|\bPURCHASE ORDER\b',
-    "Case": r'\bHVDC[-\s]?\d{3,}\b|\bCASE[-\s]?\d{3,}\b',
-    "Site": r'\b(AGI|DAS|MOSB|ADNOC|DSV|Mammoet)\b',
+    "Site": r"\b(?:AGI|DAS|MIR|SHU|MOSB)\b",
+    "Vendor": r"\b(?:DSV|Mammoet|ADNOC|ALS|SCT|Samsung C&T|HMM|COSCO)\b",
+    "Doc": r"\b(?:BL|B/L|BOE|DO|MRR|CIPL|FANR|Invoice|Packing List|Purchase Order)\b",
+    "Issue": r"\b(?:DEM|DET|demurrage|detention|claim|delay|delayed|hold|customs clearance|통관|지연|클레임|디머리지|디텐션|승인|보류)\b",
+    "Ref": r"\b(?:HVDC|CASE|PO|BL|BOE|MRR|FANR|INV)[-:/\s]?[A-Z0-9][A-Z0-9\-/]{4,}\b|\b\d{8,}\b",
 }
 
 
@@ -646,14 +707,146 @@ def _extract_entities(text: str) -> dict:
     import re
     found = {}
     for tag, pattern in _ENTITY_PATTERNS.items():
-        matches = list(set(re.findall(pattern, text or "", re.IGNORECASE)))
-        if matches:
-            found[tag] = matches[:5]
+        values = []
+        for m in re.finditer(pattern, text or "", re.IGNORECASE):
+            val = _mask_entity_value(tag, m.group(0))
+            if val and val not in values:
+                values.append(val)
+        if values:
+            found[tag] = values[:6]
     return found
 
 
+def _merge_entities(*entity_maps: dict) -> dict:
+    merged = {}
+    for entity_map in entity_maps:
+        for tag, values in (entity_map or {}).items():
+            bucket = merged.setdefault(tag, [])
+            for val in values:
+                if val not in bucket:
+                    bucket.append(val)
+    return {tag: values[:6] for tag, values in merged.items() if values}
+
+
+def _entity_chip_text(entities: dict) -> str:
+    parts = []
+    for tag in ["Vendor", "Issue", "Site", "Doc", "Ref", "BL", "PO", "Case"]:
+        vals = entities.get(tag) or []
+        if vals:
+            parts.append(f"[{tag}: {', '.join(vals[:3])}]")
+    return " ".join(parts)
+
+
+def _normalize_score(series: pd.Series) -> pd.Series:
+    vals = pd.to_numeric(series, errors="coerce").fillna(0.0)
+    if vals.empty:
+        return vals
+    hi = float(vals.max())
+    lo = float(vals.min())
+    if hi == lo:
+        return pd.Series([1.0 if hi else 0.0] * len(vals), index=vals.index)
+    return (vals - lo) / (hi - lo)
+
+
+def _entity_match_score(row: pd.Series, query_entities: dict, query: str) -> float:
+    haystack = " ".join(
+        str(row.get(col, "") or "")
+        for col in ["subject", "sendername", "senderemail", "company_name", "site", "stage", "hvdc_cases"]
+    ).lower()
+    hits = 0
+    total = 0
+    for values in (query_entities or {}).values():
+        for value in values[:4]:
+            total += 1
+            if value and str(value).lower() in haystack:
+                hits += 1
+    for term in _query_terms(query)[:6]:
+        total += 1
+        if term.lower() in haystack:
+            hits += 1
+    return min(1.0, hits / max(total, 1))
+
+
+def _decision_signal_score(row: pd.Series) -> float:
+    text = " ".join(str(row.get(col, "") or "") for col in ["subject", "hvdc_cases"]).lower()
+    signals = [
+        "approve", "approved", "approval", "confirm", "confirmed", "reject",
+        "rejected", "hold", "pending", "claim", "decision", "승인", "확정", "보류", "클레임",
+    ]
+    return 1.0 if any(sig in text for sig in signals) else 0.0
+
+
+def _search_copilot_rerank(df: pd.DataFrame, query: str, query_entities: dict | None = None) -> pd.DataFrame:
+    if df.empty or not query:
+        return df
+
+    out = df.copy()
+    query_entities = query_entities or _extract_entities(query)
+    if "bm25_norm" not in out.columns:
+        out["bm25_norm"] = _normalize_score(out["bm25_score"]) if "bm25_score" in out.columns else 0.0
+    out["vector_norm"] = _normalize_score(out["cosine_score"]) if "cosine_score" in out.columns else 0.0
+    out["entity_match"] = out.apply(lambda row: _entity_match_score(row, query_entities, query), axis=1)
+    dt = pd.to_datetime(out.get("deliverytime"), errors="coerce")
+    if dt.notna().any():
+        age_days = (dt.max() - dt).dt.days.fillna(9999)
+        out["recency_score"] = 1 - _normalize_score(age_days)
+    else:
+        out["recency_score"] = 0.0
+    out["decision_signal"] = out.apply(_decision_signal_score, axis=1)
+
+    if "cosine_score" in out.columns:
+        out["search_copilot_score"] = (
+            0.45 * out["bm25_norm"]
+            + 0.30 * out["vector_norm"]
+            + 0.15 * out["entity_match"]
+            + 0.05 * out["recency_score"]
+            + 0.05 * out["decision_signal"]
+        )
+    else:
+        out["search_copilot_score"] = (
+            0.65 * out["bm25_norm"]
+            + 0.20 * out["entity_match"]
+            + 0.10 * out["recency_score"]
+            + 0.05 * out["decision_signal"]
+        )
+    return out.sort_values("search_copilot_score", ascending=False)
+
+
+def _deterministic_rewrite_query(text: str) -> str:
+    terms = _query_terms(text)
+    expanded = list(terms)
+    q_lower = (text or "").lower()
+
+    for key, (variants, en_terms) in HVDC_GLOSSARY.items():
+        candidates = [key, *variants, *en_terms]
+        if any(str(c).lower() in q_lower for c in candidates):
+            expanded.extend(en_terms[:3])
+
+    direct_map = {
+        "dem": ["DEM", "demurrage", "detention"],
+        "det": ["DET", "detention", "demurrage"],
+        "claim": ["claim", "dispute", "supporting invoice"],
+        "delay": ["delay", "delayed", "hold"],
+        "boe": ["BOE", "bill of entry", "customs declaration"],
+        "mrr": ["MRR", "material receiving report", "inspection"],
+    }
+    for key, synonyms in direct_map.items():
+        if key in q_lower:
+            expanded.extend(synonyms)
+
+    normalized = []
+    for term in expanded:
+        term = str(term).strip()
+        if term and term.lower() not in {x.lower() for x in normalized}:
+            normalized.append(term)
+    return " OR ".join(normalized[:5]) if normalized else (text or "")
+
+
 def _rewrite_query(text: str, api_key: str) -> str:
-    """Expand query with at most 2-3 closely related synonyms via Gemini Flash."""
+    """Expand query deterministically first, then optionally ask Gemini for close synonyms."""
+    deterministic = _deterministic_rewrite_query(text)
+    if not api_key:
+        return deterministic
     try:
         from google import genai
         client = genai.Client(api_key=api_key)
@@ -666,16 +859,16 @@ def _rewrite_query(text: str, api_key: str) -> str:
                 "do NOT add generic domain terms or acronyms that are unrelated. "
                 "Format: original OR synonym1 OR synonym2. "
                 "If no close synonym exists, return the original unchanged. "
-                "Return ONLY the query, no explanation:\n\n" + text
+                "Return ONLY the query, no explanation:\n\n" + deterministic
             ),
         )
         result = resp.text.strip()
         # Safety guard: if Gemini returns >4 OR-terms, it over-expanded — fall back
-        if len(result.split(" OR ")) > 4:
-            return text
+        if len(result.split(" OR ")) > 5:
+            return deterministic
         return result
     except Exception:
-        return text
+        return deterministic
 
 
 def _translate_ko_to_en(text: str, api_key: str) -> str:
@@ -750,6 +943,11 @@ def _pdf_url(linkkey) -> str:
 # HVDC 어휘는 고정 집합이므로 결정론적 사전이 Gemini 직역보다 정확·무료·즉시.
 # 운영 빈도순. 미스 시 호출부에서 원문 직역으로 폴백.
 HVDC_GLOSSARY: dict[str, tuple[list[str], list[str]]] = {
+    "디머리지": (["디머리지", "DEM", "demurrage"],          ["DEM", "demurrage", "detention"]),
+    "디텐션":   (["디텐션", "DET", "detention"],            ["DET", "detention", "demurrage"]),
+    "dem":      (["DEM", "디머리지", "demurrage"],          ["DEM", "demurrage", "detention"]),
+    "det":      (["DET", "디텐션", "detention"],            ["DET", "detention", "demurrage"]),
+    "클레임":   (["클레임", "claim", "분쟁"],               ["claim", "dispute", "supporting invoice"]),
     "기성":   (["기성", "기성금", "기성청구", "기성고"], ["progress payment", "interim payment", "IPC"]),
     "통관":   (["통관", "수입통관", "세관"],              ["customs clearance", "customs"]),
     "선적":   (["선적", "적재", "본선적재"],              ["shipment", "shipping", "loading"]),
@@ -770,20 +968,29 @@ HVDC_GLOSSARY: dict[str, tuple[list[str], list[str]]] = {
     "통선":   (["통선", "부선", "바지"],                  ["barge", "feeder vessel"]),
     "중량물": (["중량물", "초중량", "대형화물"],          ["heavy lift", "heavy cargo", "oversized"]),
     "면장":   (["면장", "수입면장", "통관면장"],          ["customs declaration", "bill of entry", "BOE"]),
+    "fanr":    (["FANR", "fanr"],                          ["FANR", "approval", "notice"]),
+    "mrr":     (["MRR", "mrr", "검수"],                    ["MRR", "material receiving report", "inspection"]),
 }
 
 
 def _glossary_expand(ko_query: str) -> tuple[list[str], list[str]]:
     """한국어 쿼리 → (한국어 변형들, 영어 BM25 동의어들).
 
-    사전 매칭(부분 포함) 시 변형·영어 동의어 반환.
+    사전 매칭(부분 포함) 시 모든 관련 변형·영어 동의어 반환.
     매칭 없으면 ([원문], []) — 호출부는 영어 비어있으면 ILIKE 단독으로 폴백.
     """
     q = ko_query.strip()
+    q_lower = q.lower()
+    ko_out = [q]
+    en_out: list[str] = []
     for key, (ko_variants, en_terms) in HVDC_GLOSSARY.items():
-        if key in q:
-            return (ko_variants, en_terms)
-    return ([q], [])
+        candidates = [key, *ko_variants, *en_terms]
+        if any(str(c).lower() in q_lower for c in candidates):
+            ko_out.extend(ko_variants)
+            en_out.extend(en_terms)
+    ko_out = list(dict.fromkeys(v for v in ko_out if v))
+    en_out = list(dict.fromkeys(v for v in en_out if v))
+    return (ko_out[:8], en_out[:8])
 
 
 def _cluster_emails(df):
@@ -962,8 +1169,7 @@ with st.sidebar:
         case_filter   = st.text_input(T["case_filter_label"],   placeholder=T["case_filter_ph"])
 
     max_rows = st.slider(T["max_rows"], 50, 2000, 200, 50)
-    _qr_api = st.secrets.get("google_api_key", "")
-    use_query_rewrite = bool(_qr_api) and st.checkbox(T["query_rewrite"], value=False)
+    use_query_rewrite = st.checkbox(T["query_rewrite"], value=True)
 
     st.divider()
 
@@ -1018,6 +1224,7 @@ with tab_search:
     PARAMS: list = []
 
     google_api_key = st.secrets.get("google_api_key", "")
+    query_entities = _extract_entities(query_text)
     bm25_query   = query_text
     ko_raw_query = ""        # Korean input flag → recency ordering
     ko_en_terms  = []        # glossary English domain terms used (for badge)
@@ -1049,7 +1256,7 @@ with tab_search:
         q_clause = f"({ko_where})"
     else:
         # English (or empty): optional synonym rewrite, then BM25
-        if bm25_query and use_query_rewrite and google_api_key:
+        if bm25_query and use_query_rewrite:
             with st.spinner(T["sem_translate"]):
                 bm25_query = _rewrite_query(bm25_query, google_api_key)
                 if bm25_query != query_text:
@@ -1114,9 +1321,13 @@ with tab_search:
             # Korean-variant exact matches rank first (tier 0), English domain BM25
             # matches below (tier 1); recency within each tier. Preserves precision.
             _tier = f", CASE WHEN ({ko_ilike_expr}) THEN 0 ELSE 1 END AS ko_tier"
+            _sel_params = list(ko_ilike_params)
+            if ko_en_terms:
+                _tier += ", fts_main_emails.match_bm25(no, ?) AS bm25_score"
+                _sel_params.append(bm25_query)
             df, total_cnt, where_clause = _run_search(
                 q_clause, q_params,
-                select_extra=_tier, select_params=list(ko_ilike_params),
+                select_extra=_tier, select_params=_sel_params,
                 order_by='ORDER BY ko_tier ASC, "deliverytime" DESC',
             )
         else:
@@ -1148,6 +1359,9 @@ with tab_search:
             if not _d.empty:
                 df, total_cnt, where_clause, search_mode = _d, _c, _wc, "ilike_fb"
 
+    if not df.empty and query_text:
+        df = _search_copilot_rerank(df, bm25_query or query_text, query_entities)
+
     c1, c2, c3 = st.columns(3)
     c1.metric(T["metric_match"], f"{total_cnt:,}", help=T["metric_match_help"])
     c2.metric(T["metric_shown"], f"{len(df):,}",   help=f"{T['metric_shown_help']} {max_rows:,}")
@@ -1164,6 +1378,8 @@ with tab_search:
         st.caption(f"🧩 토큰 분리 검색(폴백): `{bm25_query}`")
     elif search_mode == "ilike_fb":
         st.caption(f"⚠ 부분 일치(폴백): `{query_text}` substring")
+    if query_entities:
+        st.caption(f"{T['detected_entities']}: {_entity_chip_text(query_entities)}")
 
     if df.empty:
         any_filter = bool(query_text or sel_months or sel_sites or sel_stages
@@ -1186,8 +1402,23 @@ with tab_search:
                 dict(zip(_body_batch["no"].astype(str), _body_batch["plaintextbody"]))
                 if not _body_batch.empty else {}
             )
+            _snippet_query = " ".join(dict.fromkeys([query_text, bm25_query]))
             df_show["snippet"] = df_show["no"].apply(
-                lambda n: _extract_snippet(_bmap.get(str(n), ""), bm25_query) or T["snip_none"]
+                lambda n: _extract_snippet(_bmap.get(str(n), ""), _snippet_query) or T["snip_none"]
+            )
+            df_show["entities"] = df_show.apply(
+                lambda row: _entity_chip_text(_merge_entities(
+                    query_entities,
+                    _extract_entities(
+                        " ".join(
+                            str(row.get(col, "") or "")
+                            for col in ["subject", "sendername", "company_name", "site", "stage", "hvdc_cases"]
+                        )
+                        + " "
+                        + str(_bmap.get(str(row.get("no")), "") or "")
+                    ),
+                )),
+                axis=1,
             )
         if "linkkey" in df_show.columns:
             df_show["pdf_link"] = (
@@ -1203,6 +1434,10 @@ with tab_search:
             df_table = df_show.drop(columns=["snippet"])
         else:
             df_table = df_show
+        df_table = df_table.drop(
+            columns=["bm25_norm", "vector_norm", "entity_match", "recency_score", "decision_signal"],
+            errors="ignore",
+        )
 
         st.dataframe(
             df_table,
@@ -1213,6 +1448,8 @@ with tab_search:
                 "deliverytime": st.column_config.TextColumn(T["col_received"], width=140),
                 "hvdc_cases":   st.column_config.TextColumn(T["col_cases"],    width=170),
                 "bm25_score":   st.column_config.NumberColumn(T["col_score"],  format="%.3f"),
+                "search_copilot_score": st.column_config.NumberColumn(T["col_score"], format="%.3f"),
+                "entities":     st.column_config.TextColumn(T["col_entities"], width=260),
                 "pdf_link":     st.column_config.LinkColumn(T["col_pdf"],      display_text="Open", width=70),
             },
             hide_index=True,
@@ -1237,7 +1474,13 @@ with tab_search:
             st.caption(f"🔍 **'{_refine_text}'** — {len(_df_refined)}건")
             if not _df_refined.empty:
                 _df_ref_table = _df_refined.drop(
-                    columns=[c for c in ["snippet", "pdf_link"] if c in _df_refined.columns]
+                    columns=[
+                        c for c in [
+                            "snippet", "pdf_link", "bm25_norm", "vector_norm",
+                            "entity_match", "recency_score", "decision_signal",
+                        ]
+                        if c in _df_refined.columns
+                    ]
                 )
                 st.dataframe(
                     _df_ref_table,
@@ -1925,20 +2168,21 @@ with tab_semantic:
                     )
 
                     if use_hybrid and sem_query:
+                        hybrid_query = _rewrite_query(
+                            sem_query,
+                            google_api_key if use_query_rewrite else "",
+                        )
                         bm25_df = run_query(
                             f"SELECT no, fts_main_emails.match_bm25(no, ?) AS bm25_score "
                             f"FROM emails ORDER BY bm25_score DESC LIMIT {sem_top_k * 2}",
-                            [sem_query],
+                            [hybrid_query],
                         )
                         if not bm25_df.empty and not vec_df.empty:
                             bm25_max = float(bm25_df["bm25_score"].max() or 1)
                             bm25_df["bm25_norm"] = bm25_df["bm25_score"] / bm25_max
                             merged = vec_df.merge(bm25_df[["no", "bm25_norm"]], on="no", how="left").fillna(0)
-                            merged["hybrid_score"] = (
-                                0.7 * merged["cosine_score"] + 0.3 * merged["bm25_norm"]
-                            )
-                            result_df = merged.sort_values("hybrid_score", ascending=False).head(sem_top_k)
-                            score_col_name = "hybrid_score"
+                            result_df = _search_copilot_rerank(merged, hybrid_query).head(sem_top_k)
+                            score_col_name = "search_copilot_score"
                         else:
                             result_df = vec_df.head(sem_top_k)
                             score_col_name = "cosine_score"
@@ -1950,8 +2194,15 @@ with tab_semantic:
                         st.warning(T["sem_no_result"])
                     else:
                         st.success(f"{T['sem_done']} — {len(result_df)}")
+                    result_display_df = result_df.drop(
+                        columns=[
+                            "bm25_norm", "vector_norm", "entity_match",
+                            "recency_score", "decision_signal",
+                        ],
+                        errors="ignore",
+                    )
                     st.dataframe(
-                        result_df,
+                        result_display_df,
                         use_container_width=True,
                         hide_index=True,
                         height=500,
