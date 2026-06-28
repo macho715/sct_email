@@ -651,20 +651,27 @@ def _extract_entities(text: str) -> dict:
 
 
 def _rewrite_query(text: str, api_key: str) -> str:
-    """Expand logistics query with HVDC domain synonyms via Gemini Flash."""
+    """Expand query with at most 2-3 closely related synonyms via Gemini Flash."""
     try:
         from google import genai
         client = genai.Client(api_key=api_key)
         resp = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=(
-                "You are an HVDC logistics email search assistant. "
-                "Expand this search query with relevant synonyms and acronyms "
-                "(BL, DEM, DET, DN, MRR, MOSB, DSV, Mammoet, ADNOC, AGI, DAS). "
-                "Return ONLY the expanded query, no explanation:\n\n" + text
+                "You are a logistics email search assistant. "
+                "Add at most 2 closely related synonyms to the query below. "
+                "Only add synonyms that are genuinely related to this specific term — "
+                "do NOT add generic domain terms or acronyms that are unrelated. "
+                "Format: original OR synonym1 OR synonym2. "
+                "If no close synonym exists, return the original unchanged. "
+                "Return ONLY the query, no explanation:\n\n" + text
             ),
         )
-        return resp.text.strip()
+        result = resp.text.strip()
+        # Safety guard: if Gemini returns >4 OR-terms, it over-expanded — fall back
+        if len(result.split(" OR ")) > 4:
+            return text
+        return result
     except Exception:
         return text
 
@@ -676,11 +683,16 @@ def _translate_ko_to_en(text: str, api_key: str) -> str:
         resp = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=(
-                "Translate the following Korean text to English for email search. "
-                "Return ONLY the translated text, no explanation:\n\n" + text
+                "Translate this Korean word or phrase to English. "
+                "Return ONLY the direct translation — one short phrase, no synonyms, "
+                "no explanations, no OR-joined alternatives:\n\n" + text
             ),
         )
-        return resp.text.strip()
+        result = resp.text.strip()
+        # Safety guard: if translation contains multiple OR-terms, it over-expanded
+        if " OR " in result and len(result.split(" OR ")) > 2:
+            return text
+        return result
     except Exception:
         return text
 
