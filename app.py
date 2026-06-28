@@ -627,6 +627,7 @@ _ENTITY_PATTERNS = {
 
 
 def _extract_entities(text: str) -> dict:
+    import re
     found = {}
     for tag, pattern in _ENTITY_PATTERNS.items():
         matches = list(set(re.findall(pattern, text or "", re.IGNORECASE)))
