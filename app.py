@@ -1103,16 +1103,18 @@ with tab_analytics:
                 )
 
                 @st.cache_data(show_spinner=False)
-                def _compute_layout(_edge_list: list) -> dict:
-                    _G = nx.from_edgelist(_edge_list, create_using=nx.DiGraph())
+                def _compute_layout(_edge_list: list, _node_list: list) -> dict:
+                    _G = nx.DiGraph()
+                    _G.add_nodes_from(_node_list)
+                    _G.add_edges_from(_edge_list)
                     return nx.spring_layout(_G, seed=42, k=2.0)
 
-                pos = _compute_layout(list(G.edges()))
+                pos = _compute_layout(list(G.edges()), list(G.nodes()))
 
                 edge_traces = []
                 for u, v, data in G.edges(data=True):
-                    x0, y0 = pos[u]
-                    x1, y1 = pos[v]
+                    x0, y0 = pos.get(u, (0.0, 0.0))
+                    x1, y1 = pos.get(v, (0.0, 0.0))
                     w = data.get("weight", 1)
                     edge_traces.append(go.Scatter(
                         x=[x0, x1, None], y=[y0, y1, None],
@@ -1122,8 +1124,8 @@ with tab_analytics:
                         showlegend=False,
                     ))
 
-                node_x = [pos[n][0] for n in G.nodes()]
-                node_y = [pos[n][1] for n in G.nodes()]
+                node_x = [pos.get(n, (0.0, 0.0))[0] for n in G.nodes()]
+                node_y = [pos.get(n, (0.0, 0.0))[1] for n in G.nodes()]
                 node_text = list(G.nodes())
                 node_size = [
                     max(10, min(40, G.degree(n) * 4)) for n in G.nodes()
