@@ -703,6 +703,35 @@ def _is_korean(text: str) -> bool:
     return any("가" <= ch <= "힣" for ch in text)
 
 
+@st.cache_resource(show_spinner=False)
+def _drive_links() -> dict:
+    """linkkey(12-hex prefix) → Google Drive fileId, for direct PDF links.
+
+    Built by enumerating the 5 shared attachment folders (files named
+    '{linkkey}_{name}.pdf'). Only ~12% of emails have an uploaded PDF; the
+    rest return '' and fall back to folder browse links.
+    """
+    import json
+    from pathlib import Path
+    try:
+        with open(Path(__file__).parent / "drive_links.json", encoding="utf-8-sig") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _pdf_url(linkkey) -> str:
+    """Direct Drive file link if the PDF exists in the shared folders, else ''.
+
+    Uses /file/d/{id}/view (works for anyone — files are link-shared) instead
+    of /drive/search?q= which only resolves for the owner when logged in.
+    """
+    if not linkkey:
+        return ""
+    fid = _drive_links().get(str(linkkey).strip())
+    return f"https://drive.google.com/file/d/{fid}/view" if fid else ""
+
+
 # HVDC 물류 도메인 용어 사전 — 한국어 키워드 → (한국어 변형들, 영어 BM25 동의어들)
 # HVDC 어휘는 고정 집합이므로 결정론적 사전이 Gemini 직역보다 정확·무료·즉시.
 # 운영 빈도순. 미스 시 호출부에서 원문 직역으로 폴백.
@@ -1147,9 +1176,8 @@ with tab_search:
                 lambda n: _extract_snippet(_bmap.get(str(n), ""), bm25_query) or T["snip_none"]
             )
         if "linkkey" in df_show.columns:
-            df_show["pdf_link"] = df_show["linkkey"].apply(
-                lambda k: f"https://drive.google.com/drive/search?q={k}"
-                if k and str(k).strip() not in ("", "None", "nan") else None
+            df_show["pdf_link"] = (
+                df_show["linkkey"].apply(_pdf_url).replace("", None)
             )
             df_show = df_show.drop(columns=["linkkey"])
         else:
@@ -1344,8 +1372,8 @@ with tab_search:
                         st.markdown("`" + _tag + "` " + " ".join(f"`{v}`" for v in _vals))
 
                 lk = r.get("linkkey") if hasattr(r, "get") else r["linkkey"]
-                if lk and str(lk).strip() not in ("", "None", "nan"):
-                    pdf_url = f"https://drive.google.com/drive/search?q={lk}"
+                pdf_url = _pdf_url(lk)
+                if pdf_url:
                     st.link_button(T["btn_pdf"], pdf_url, type="primary")
                 else:
                     st.markdown(f"**{T['pdf_folder_alt']}**")
