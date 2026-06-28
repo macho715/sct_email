@@ -616,6 +616,23 @@ def _extract_snippet(body: str, query: str, context_chars: int = 150) -> str:
     return ("…" if start > 0 else "") + snippet + ("…" if end < len(body) else "")
 
 
+_ENTITY_PATTERNS = {
+    "BL":   r'\bBL[-\s]?\d{6,}\b|\bBILL OF LADING\b',
+    "PO":   r'\bPO[-\s]?\d{5,}\b|\bPURCHASE ORDER\b',
+    "Case": r'\bHVDC[-\s]?\d{3,}\b|\bCASE[-\s]?\d{3,}\b',
+    "Site": r'\b(AGI|DAS|MOSB|ADNOC|DSV|Mammoet)\b',
+}
+
+
+def _extract_entities(text: str) -> dict:
+    found = {}
+    for tag, pattern in _ENTITY_PATTERNS.items():
+        matches = list(set(re.findall(pattern, text or "", re.IGNORECASE)))
+        if matches:
+            found[tag] = matches[:5]
+    return found
+
+
 def _translate_ko_to_en(text: str, api_key: str) -> str:
     try:
         from google import genai
@@ -958,6 +975,12 @@ with tab_search:
                 col_b.markdown(f"**{T['col_received']}**  \n{r['deliverytime']}")
                 col_b.markdown(f"**{T['col_recipients']}**  \n{r['recipientto']}")
                 st.text_area(T["col_body"], value=r["plaintextbody"] or f"({T['col_body']} N/A)", height=380)
+
+                _entities = _extract_entities(str(r["plaintextbody"] or ""))
+                if _entities:
+                    st.markdown("**Entities:**")
+                    for _tag, _vals in _entities.items():
+                        st.markdown("`" + _tag + "` " + " ".join(f"`{v}`" for v in _vals))
 
                 lk = r.get("linkkey") if hasattr(r, "get") else r["linkkey"]
                 if lk and str(lk).strip() not in ("", "None", "nan"):
