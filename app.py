@@ -705,11 +705,12 @@ def _is_korean(text: str) -> bool:
 
 @st.cache_resource(show_spinner=False)
 def _drive_links() -> dict:
-    """linkkey(12-hex prefix) → Google Drive fileId, for direct PDF links.
+    """linkkey(12-hex prefix) → list of {id, title} Drive PDF files.
 
     Built by enumerating the 5 shared attachment folders (files named
-    '{linkkey}_{name}.pdf'). Only ~12% of emails have an uploaded PDF; the
-    rest return '' and fall back to folder browse links.
+    '{linkkey}_{name}.pdf'). A linkkey maps to MULTIPLE files when the
+    attachment was split (part1/part2/...). Emails without an uploaded PDF
+    return [] and fall back to folder browse links.
     """
     import json
     from pathlib import Path
@@ -720,16 +721,29 @@ def _drive_links() -> dict:
         return {}
 
 
-def _pdf_url(linkkey) -> str:
-    """Direct Drive file link if the PDF exists in the shared folders, else ''.
+def _pdf_parts(linkkey) -> list:
+    """Direct Drive links for a linkkey's PDF(s) as (label, url) tuples.
 
-    Uses /file/d/{id}/view (works for anyone — files are link-shared) instead
-    of /drive/search?q= which only resolves for the owner when logged in.
+    Uses /file/d/{id}/view (works for any link-shared viewer) instead of
+    /drive/search?q= which only resolves for the owner when logged in.
+    Split attachments yield "part 1/2/…" labels. Returns [] when no PDF
+    exists → caller shows the folder-browse fallback.
     """
     if not linkkey:
-        return ""
-    fid = _drive_links().get(str(linkkey).strip())
-    return f"https://drive.google.com/file/d/{fid}/view" if fid else ""
+        return []
+    items = _drive_links().get(str(linkkey).strip()) or []
+    multi = len(items) > 1
+    out = []
+    for i, it in enumerate(items, 1):
+        url = f"https://drive.google.com/file/d/{it['id']}/view"
+        out.append((f"📄 PDF part {i}" if multi else "📄 PDF", url))
+    return out
+
+
+def _pdf_url(linkkey) -> str:
+    """First PDF link for a linkkey (table column), or '' when none."""
+    parts = _pdf_parts(linkkey)
+    return parts[0][1] if parts else ""
 
 
 # HVDC 물류 도메인 용어 사전 — 한국어 키워드 → (한국어 변형들, 영어 BM25 동의어들)
@@ -1372,9 +1386,15 @@ with tab_search:
                         st.markdown("`" + _tag + "` " + " ".join(f"`{v}`" for v in _vals))
 
                 lk = r.get("linkkey") if hasattr(r, "get") else r["linkkey"]
-                pdf_url = _pdf_url(lk)
-                if pdf_url:
-                    st.link_button(T["btn_pdf"], pdf_url, type="primary")
+                pdf_parts = _pdf_parts(lk)
+                if pdf_parts:
+                    _label_multi = len(pdf_parts) > 1
+                    for _i, (_plabel, _purl) in enumerate(pdf_parts):
+                        st.link_button(
+                            _plabel if _label_multi else T["btn_pdf"],
+                            _purl,
+                            type="primary",
+                        )
                 else:
                     st.markdown(f"**{T['pdf_folder_alt']}**")
                     for _label, _url in DRIVE_FOLDERS:
