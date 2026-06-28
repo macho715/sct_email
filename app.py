@@ -934,7 +934,9 @@ with tab_search:
 
     google_api_key = st.secrets.get("google_api_key", "")
     bm25_query = query_text
+    ko_raw_query = ""  # Korean original for parallel ILIKE search
     if query_text and google_api_key and _is_korean(query_text):
+        ko_raw_query = query_text
         with st.spinner(T["sem_translate"]):
             bm25_query = _translate_ko_to_en(query_text, google_api_key)
 
@@ -943,8 +945,15 @@ with tab_search:
             bm25_query = _rewrite_query(bm25_query, google_api_key)
 
     if bm25_query:
-        WHERE.append("fts_main_emails.match_bm25(no, ?) IS NOT NULL")
-        PARAMS.append(bm25_query)
+        if ko_raw_query:
+            # Korean input: ILIKE on Korean original text.
+            # BM25 FTS does not index Korean chars; English translation ("established"
+            # for "기성") hits unrelated company names — skip BM25 filter for Korean.
+            WHERE.append("(subject ILIKE ? OR plaintextbody ILIKE ?)")
+            PARAMS.extend([f"%{ko_raw_query}%", f"%{ko_raw_query}%"])
+        else:
+            WHERE.append("fts_main_emails.match_bm25(no, ?) IS NOT NULL")
+            PARAMS.append(bm25_query)
 
     if sel_months:
         ph = ", ".join(["?"] * len(sel_months))
@@ -971,11 +980,13 @@ with tab_search:
 
     where_clause = ("WHERE " + " AND ".join(WHERE)) if WHERE else ""
 
-    if bm25_query:
+    if bm25_query and not ko_raw_query:
+        # English BM25 search: rank by relevance score
         score_col    = ", fts_main_emails.match_bm25(no, ?) AS bm25_score"
         order_by     = "ORDER BY bm25_score DESC"
         extra_params = [bm25_query]
     else:
+        # Korean ILIKE search (or no query): rank by recency
         score_col    = ""
         order_by     = 'ORDER BY "deliverytime" DESC'
         extra_params = []
@@ -994,7 +1005,9 @@ with tab_search:
     c3.metric(T["metric_total"], f"{get_total_emails():,}", help=T["metric_total_help"])
 
     st.divider()
-    if bm25_query != query_text:
+    if ko_raw_query:
+        st.caption(f"한글 ILIKE 검색: `{ko_raw_query}` (최신순 정렬)")
+    elif bm25_query != query_text:
         st.caption(f"{T['bm25_translate']} `{bm25_query}`")
 
     if df.empty:
