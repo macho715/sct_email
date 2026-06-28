@@ -161,6 +161,12 @@ _T = {
         "btn_bulk_summary": "AI 일괄 요약 (상위 10건)",
         "bulk_summary_spinner": "Gemini 분석 중...",
         "bulk_summary_header": "검색 결과 AI 요약",
+        "query_rewrite": "쿼리 확장 사용 (Gemini)",
+        "query_rewrite_caption": "확장된 검색어:",
+        "refine_placeholder": "결과 좁히기 (예: 2025년만, DSV만)",
+        "btn_similar": "유사 이메일 5건",
+        "btn_timeline": "Case 타임라인",
+        "btn_sender_history": "발신자 히스토리",
     },
     "en": {
         # page
@@ -289,6 +295,12 @@ _T = {
         "btn_bulk_summary": "AI Summary (Top 10)",
         "bulk_summary_spinner": "Gemini summarizing...",
         "bulk_summary_header": "Search Results AI Summary",
+        "query_rewrite": "Expand query (Gemini)",
+        "query_rewrite_caption": "Expanded query:",
+        "refine_placeholder": "Refine results (e.g. 2025 only, DSV only)",
+        "btn_similar": "Similar Emails (5)",
+        "btn_timeline": "Case Timeline",
+        "btn_sender_history": "Sender History",
     },
 }
 
@@ -597,7 +609,10 @@ def _extract_snippet(body: str, query: str, context_chars: int = 150) -> str:
     match_len = len(words[0]) if words else 4
     start = max(0, best_pos - context_chars)
     end = min(len(body), best_pos + match_len + context_chars)
+    import re
     snippet = body[start:end].replace("\n", " ").replace("\r", " ").strip()
+    for w in words:
+        snippet = re.sub(f"(?i)({re.escape(w)})", r"**\1**", snippet)
     return ("…" if start > 0 else "") + snippet + ("…" if end < len(body) else "")
 
 
@@ -866,8 +881,15 @@ with tab_search:
         else:
             df_show["pdf_link"] = None
 
+        _snippets = {}
+        if "snippet" in df_show.columns:
+            _snippets = dict(zip(df_show["no"].astype(str), df_show["snippet"]))
+            df_table = df_show.drop(columns=["snippet"])
+        else:
+            df_table = df_show
+
         st.dataframe(
-            df_show,
+            df_table,
             use_container_width=True,
             column_config={
                 "subject":      st.column_config.TextColumn(T["col_subject"],  width=280),
@@ -876,11 +898,20 @@ with tab_search:
                 "hvdc_cases":   st.column_config.TextColumn(T["col_cases"],    width=170),
                 "bm25_score":   st.column_config.NumberColumn(T["col_score"],  format="%.3f"),
                 "pdf_link":     st.column_config.LinkColumn(T["col_pdf"],      display_text="Open", width=70),
-                "snippet":      st.column_config.TextColumn(T["col_snippet"],  width=300),
             },
             hide_index=True,
             height=500,
         )
+
+        if _snippets:
+            with st.expander(T["snip_header"], expanded=True):
+                for _, row in df_show.head(20).iterrows():
+                    snip = _snippets.get(str(row["no"]), "")
+                    if snip and snip != T["snip_none"]:
+                        subj = str(row.get("subject", ""))[:60]
+                        st.caption(f"**#{row['no']}** — {subj}")
+                        st.markdown(snip)
+                        st.markdown("---")
 
         if google_api_key and not df_show.empty:
             if st.button(T["btn_bulk_summary"], key="bulk_summary"):
