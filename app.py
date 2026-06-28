@@ -314,71 +314,140 @@ if _PASSWORD:
 
 st.markdown("""
 <style>
-[data-testid="stSidebar"] { background: #F7F9FC; }
+/* ─── LAYOUT ─── */
+[data-testid="block-container"] { padding: 1rem 2rem 2rem !important; }
+
+/* ─── HEADER BANNER ─── */
+.hvdc-header {
+    background: linear-gradient(135deg, #1F5276 0%, #2E86C1 55%, #5DADE2 100%);
+    border-radius: 12px; padding: 18px 24px; margin-bottom: 1.2rem;
+    display: flex; align-items: center; gap: 14px;
+    box-shadow: 0 4px 20px rgba(31,82,118,0.25);
+}
+.hvdc-header-icon { font-size: 1.9rem; }
+.hvdc-header-title {
+    font-size: 1.5rem; font-weight: 700;
+    color: #FFFFFF; margin: 0; letter-spacing: -0.02em;
+}
+.hvdc-header-caption { font-size: 0.78rem; color: rgba(255,255,255,0.80); margin: 3px 0 0; }
+.hvdc-header-badge {
+    margin-left: auto; background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.30); border-radius: 20px;
+    padding: 4px 12px; font-size: 0.70rem;
+    color: rgba(255,255,255,0.90); font-weight: 600; white-space: nowrap;
+}
+
+/* ─── SIDEBAR ─── */
+[data-testid="stSidebar"] { background: #F0F4F8 !important; border-right: 1px solid #E2E8F0; }
 [data-testid="stSidebar"] * { color: #1E293B !important; }
 [data-testid="stSidebar"] .stSelectbox label,
 [data-testid="stSidebar"] .stMultiSelect label,
 [data-testid="stSidebar"] .stTextInput label,
 [data-testid="stSidebar"] .stSlider label { color: #374151 !important; }
-[data-testid="stMetricValue"]  { color: #1F5276; font-size: 1.55rem; font-weight: 700; }
-[data-testid="stMetricLabel"]  {
-    font-size: .75rem; color: #64748B; font-weight: 600;
-    text-transform: uppercase; letter-spacing: .04em;
-}
-/* Tab active indicator */
-.stTabs [role="tab"] { font-weight: 500; }
-.stTabs [data-baseweb="tab"][aria-selected="true"] {
-    border-bottom: 3px solid #1F5276;
-    color: #1F5276;
-}
-.stButton > button:focus-visible,
-[data-testid="stDownloadButton"] > button:focus-visible {
-    outline: 2px solid #1F5276;
-    outline-offset: 2px;
-}
-[data-testid="stDownloadButton"] > button {
-    background: #1F5276; color: white;
-    border: none; border-radius: 6px;
-    padding: 0.4rem 1rem;
-}
-[data-testid="stDownloadButton"] > button:hover { background: #2E86C1; }
-div[data-testid="stAlert"] { border-radius: 8px; }
-[data-testid="stDataFrame"] { border-radius: 8px; }
-/* Sidebar section card */
 .sidebar-section {
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
-    border-radius: 8px;
-    padding: 12px 14px;
-    margin-bottom: 10px;
+    background: #FFFFFF; border: 1px solid #E2E8F0;
+    border-radius: 10px; padding: 12px 14px; margin-bottom: 10px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
 }
-/* Sidebar section label */
 .sidebar-label {
-    font-size: 0.72rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: #2471A3;
-    margin-bottom: 6px;
+    font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.10em; color: #1F5276; margin-bottom: 8px;
 }
-/* AI summary branded card */
+
+/* ─── METRIC CARDS ─── */
+[data-testid="stMetric"] {
+    background: #FFFFFF; border: 1px solid #E2E8F0;
+    border-radius: 12px; padding: 14px 18px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    border-top: 3px solid #1F5276;
+}
+[data-testid="stMetricValue"] {
+    color: #1F5276 !important; font-size: 1.6rem !important; font-weight: 700 !important;
+}
+[data-testid="stMetricLabel"] {
+    font-size: 0.72rem !important; color: #64748B !important;
+    font-weight: 600 !important; text-transform: uppercase; letter-spacing: 0.05em;
+}
+
+/* ─── TABS (pill style) ─── */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 4px; background: #F1F5F9; padding: 4px; border-radius: 10px;
+}
+.stTabs [role="tab"] {
+    font-weight: 500; border-radius: 8px; padding: 6px 16px; color: #475569;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.stTabs [role="tab"]:hover { background: rgba(31,82,118,0.08); color: #1F5276; }
+.stTabs [data-baseweb="tab"][aria-selected="true"] {
+    background: #FFFFFF !important; color: #1F5276 !important;
+    font-weight: 700; box-shadow: 0 1px 4px rgba(0,0,0,0.10); border-bottom: none !important;
+}
+.stTabs [data-baseweb="tab-highlight"] { display: none !important; }
+
+/* ─── BUTTONS ─── */
+.stButton > button { border-radius: 8px; font-weight: 600; transition: all 0.15s ease; }
+.stButton > button:hover { transform: translateY(-1px); }
+.stButton > button:focus-visible,
+[data-testid="stDownloadButton"] > button:focus-visible { outline: 2px solid #1F5276; outline-offset: 2px; }
+[data-testid="stDownloadButton"] > button {
+    background: #1F5276; color: white; border: none;
+    border-radius: 8px; padding: 0.45rem 1.1rem;
+    font-weight: 600; transition: all 0.15s ease;
+}
+[data-testid="stDownloadButton"] > button:hover {
+    background: #2E86C1; box-shadow: 0 3px 10px rgba(31,82,118,0.25); transform: translateY(-1px);
+}
+
+/* ─── TEXT INPUT ─── */
+[data-testid="stTextInput"] input { border-radius: 8px !important; transition: border-color 0.15s !important; }
+[data-testid="stTextInput"] input:focus {
+    border-color: #1F5276 !important; box-shadow: 0 0 0 2px rgba(31,82,118,0.12) !important;
+}
+
+/* ─── DATA / ALERTS / EXPANDER / CHARTS ─── */
+div[data-testid="stAlert"] { border-radius: 10px; border-left-width: 4px; }
+[data-testid="stDataFrame"] { border-radius: 10px; border: 1px solid #E2E8F0; box-shadow: 0 1px 4px rgba(0,0,0,0.05); }
+[data-testid="stExpander"] { border: 1px solid #E2E8F0 !important; border-radius: 10px !important; overflow: hidden; }
+[data-testid="stPlotlyChart"] { border: 1px solid #E2E8F0; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.05); }
+
+/* ─── AI SUMMARY CARD ─── */
 .ai-summary-card {
-    background: #E8F4FD;
-    border-left: 4px solid #1F5276;
-    border-radius: 0 8px 8px 0;
-    padding: 14px 16px;
-    margin-top: 8px;
-    white-space: pre-wrap;
-    font-size: 0.9rem;
-    line-height: 1.6;
-    color: #1E293B;
+    background: linear-gradient(to right, #EBF5FB, #F8FBFF);
+    border-left: 4px solid #1F5276; border-radius: 0 10px 10px 0;
+    padding: 16px 20px; margin-top: 10px; white-space: pre-wrap;
+    font-size: 0.88rem; line-height: 1.7; color: #1E293B;
+    box-shadow: 0 2px 8px rgba(31,82,118,0.08);
 }
-/* Language toggle */
-.lang-toggle button {
-    font-size: 0.8rem !important;
-    font-weight: 700 !important;
-    padding: 0.25rem 0.5rem !important;
+
+/* ─── EMAIL CARD ─── */
+.email-card {
+    background: #FFFFFF; border: 1px solid #E2E8F0;
+    border-radius: 10px; padding: 14px 18px; margin-bottom: 8px;
+    transition: box-shadow 0.15s ease, border-color 0.15s ease;
 }
+.email-card:hover { box-shadow: 0 4px 16px rgba(31,82,118,0.12); border-color: #5DADE2; }
+.email-card-subject { font-weight: 600; font-size: 0.95rem; color: #1E293B; margin-bottom: 4px; }
+.email-card-meta { font-size: 0.78rem; color: #64748B; display: flex; gap: 10px; }
+.email-card-snippet { margin-top: 8px; font-size: 0.82rem; color: #475569; border-top: 1px solid #F1F5F9; padding-top: 8px; line-height: 1.5; }
+
+/* ─── TAGS / BADGES ─── */
+.tag-pill {
+    display: inline-block; background: #EBF5FB; color: #1F5276;
+    border: 1px solid #AED6F1; border-radius: 20px;
+    font-size: 0.68rem; font-weight: 600; padding: 1px 8px; margin: 2px;
+}
+.score-badge {
+    display: inline-block; background: #1F5276; color: white;
+    border-radius: 6px; font-size: 0.66rem; font-weight: 700; padding: 2px 7px; vertical-align: middle;
+}
+
+/* ─── MISC ─── */
+.lang-toggle button { font-size: 0.8rem !important; font-weight: 700 !important; padding: 0.25rem 0.5rem !important; }
+hr { border-color: #E2E8F0 !important; margin: 10px 0 !important; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #F1F5F9; border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -556,8 +625,16 @@ def _is_korean(text: str) -> bool:
 T = _T[st.session_state.lang]
 
 # ── 헤더 ─────────────────────────────────────────────────────────
-st.title("✉ HVDC Email Search")
-st.caption(T["caption"])
+st.markdown(f"""
+<div class="hvdc-header">
+    <span class="hvdc-header-icon">✉</span>
+    <div>
+        <div class="hvdc-header-title">HVDC Email Search</div>
+        <div class="hvdc-header-caption">{T["caption"]}</div>
+    </div>
+    <div class="hvdc-header-badge">51,964 emails · DuckDB FTS</div>
+</div>
+""", unsafe_allow_html=True)
 
 # ── DB 초기화 (atomic, top-level) ────────────────────────────────
 if _DB_TMP.exists():
