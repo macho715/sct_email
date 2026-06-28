@@ -29,3 +29,7 @@ graphify-out/
 # Session artifacts
 20260626_*.md
 20260627_*.md
+
+# Embedding artifacts
+embedding_err.txt
+launch_embed.ps1

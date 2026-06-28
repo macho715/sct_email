@@ -1,16 +1,27 @@
 """
 Excel → DuckDB 변환 (1회 실행)
 헤더: row 4, 데이터: row 5~
+
+v2 개선 (2026-06-28) — Arrow staging table 패턴:
+  - executemany UPDATE 루프 제거 (SIGSEGV 원인)
+  - emb_staging에 PyArrow FixedSizeList INSERT → 단일 UPDATE JOIN
+  - CHECKPOINT 주기적 WAL flush
+  - 재시작 시 emb_staging 기반 자동 재개 (ON CONFLICT DO NOTHING)
 """
-import os
-import time
-import openpyxl
-import duckdb
 import re
+import time
 from pathlib import Path
 
-XLSX = Path(__file__).parent.parent / "OUTLOOK_HVDC_20260626_120747 (2).xlsx"
+import duckdb
+import openpyxl
+
+XLSX = Path(__file__).parent / "OUTLOOK_HVDC.xlsx"
 DB   = Path(__file__).parent / "hvdc_mail.duckdb"
+
+EMBED_MODEL  = "all-MiniLM-L6-v2"
+EMBED_DIM    = 384
+ENCODE_BATCH = 512    # sentence-transformers encode batch (CPU 최적)
+INSERT_CHUNK = 2048   # 한 번에 fetch·insert 할 행 수
 
 
 def clean_col(name: str) -> str:
@@ -19,48 +30,39 @@ def clean_col(name: str) -> str:
     return re.sub(r"\W+", "_", str(name)).strip("_").lower()
 
 
-def build():
+# ══════════════════════════════════════════════════════════ Phase 1 ══
+def build() -> None:
+    """Excel → emails 테이블 + FTS + B-tree 인덱스."""
     print(f"Loading {XLSX.name} ...")
     wb = openpyxl.load_workbook(XLSX, read_only=True, data_only=True)
     ws = wb["전체_데이터"]
-    rows = ws.iter_rows(values_only=True)
+    rows_iter = ws.iter_rows(values_only=True)
 
-    # skip rows 1-3 (title / note / blank)
-    for _ in range(3):
-        next(rows)
-
-    raw_headers = next(rows)  # row 4
+    for _ in range(3):            # rows 1-3 skip (title/note/blank)
+        next(rows_iter)
+    raw_headers = next(rows_iter) # row 4 = headers
     headers = [clean_col(h) for h in raw_headers]
 
     print(f"Columns ({len(headers)}): {headers}")
-    print("Reading data rows...")
-
-    data = [list(r) for r in rows if any(v is not None for v in r)]
-    print(f"  {len(data):,} rows loaded")
+    data = [list(r) for r in rows_iter if any(v is not None for v in r)]
+    print(f"  {len(data):,} data rows loaded")
 
     con = duckdb.connect(str(DB))
     con.execute("DROP TABLE IF EXISTS emails")
-
-    # CREATE TABLE
     col_defs = ", ".join(f'"{h}" VARCHAR' for h in headers)
     con.execute(f"CREATE TABLE emails ({col_defs})")
 
-    # INSERT in chunks
-    CHUNK = 5000
+    CHUNK = 5_000
+    ph = ", ".join(["?"] * len(headers))
     for i in range(0, len(data), CHUNK):
-        chunk = data[i : i + CHUNK]
-        placeholders = ", ".join(["?"] * len(headers))
         con.executemany(
-            f"INSERT INTO emails VALUES ({placeholders})",
-            [list(map(str, r)) for r in chunk],
+            f'INSERT INTO emails VALUES ({ph})',
+            [list(map(str, r)) for r in data[i : i + CHUNK]],
         )
-        print(f"  inserted {min(i+CHUNK, len(data)):,}/{len(data):,}", end="\r")
+        print(f"  inserted {min(i + CHUNK, len(data)):,}/{len(data):,}", end="\r")
 
     print("\nBuilding FTS index ...")
-    con.execute("""
-        INSTALL fts;
-        LOAD fts;
-    """)
+    con.execute("INSTALL fts; LOAD fts;")
     con.execute("""
         PRAGMA create_fts_index(
             'emails', 'no',
@@ -70,127 +72,57 @@ def build():
             stemmer='english', stopwords='english',
             ignore='(\\.|[^a-z])+',
             strip_accents=1, lower=1, overwrite=1
-        );
+        )
     """)
-
-    # 인덱스 생성
     con.execute('CREATE INDEX IF NOT EXISTS idx_month ON emails("month")')
     con.execute('CREATE INDEX IF NOT EXISTS idx_stage ON emails("stage")')
     con.execute('CREATE INDEX IF NOT EXISTS idx_site  ON emails("site")')
 
-    count = con.execute("SELECT COUNT(*) FROM emails").fetchone()[0]
-    print(f"Done — {count:,} rows in {DB.name}")
+    n = con.execute("SELECT COUNT(*) FROM emails").fetchone()[0]
+    print(f"Phase 1 done — {n:,} rows in {DB.name}")
     con.close()
 
 
-def add_embeddings(db_path: Path) -> None:
-    """
-    sentence-transformers all-MiniLM-L6-v2로 emails 테이블에 벡터 임베딩 추가 (384 dim).
-    기존 embedding 컬럼을 DROP 후 FLOAT[384]로 재생성 (dim 변경 대응).
-    """
-    from sentence_transformers import SentenceTransformer
-
-    print("Loading all-MiniLM-L6-v2 model (first run downloads ~80MB) ...")
-    model = SentenceTransformer("all-MiniLM-L6-v2")
-
-    con = duckdb.connect(str(db_path))
-
-    # Drop ALL indexes/FTS that block ALTER TABLE
-    for drop_sql, label in [
-        ("DROP INDEX IF EXISTS idx_month",        "idx_month"),
-        ("DROP INDEX IF EXISTS idx_stage",        "idx_stage"),
-        ("DROP INDEX IF EXISTS idx_site",         "idx_site"),
-        ("DROP INDEX IF EXISTS idx_embedding_hnsw", "idx_embedding_hnsw (HNSW)"),
+# ══════════════════════════════════════════════════════════ helpers ══
+def _drop_indexes(con: duckdb.DuckDBPyConnection) -> None:
+    for sql in [
+        "DROP INDEX IF EXISTS idx_month",
+        "DROP INDEX IF EXISTS idx_stage",
+        "DROP INDEX IF EXISTS idx_site",
+        "DROP INDEX IF EXISTS idx_embedding_hnsw",
     ]:
         try:
-            con.execute(drop_sql)
-            print(f"  Dropped {label}.")
-        except Exception as exc:
-            print(f"  {label} drop skipped: {exc}")
-
-    # Drop FTS auxiliary tables
+            con.execute(sql)
+        except Exception:
+            pass
     try:
-        con.execute("INSTALL fts")
-        con.execute("LOAD fts")
+        con.execute("INSTALL fts; LOAD fts;")
         con.execute("PRAGMA drop_fts_index('emails')")
-        print("  FTS index dropped.")
-    except Exception as exc:
-        print(f"  FTS drop skipped: {exc}")
-
-    # Drop HNSW if VSS needed for proper removal
-    try:
-        con.execute("INSTALL vss")
-        con.execute("LOAD vss")
-        con.execute("DROP INDEX IF EXISTS idx_embedding_hnsw")
     except Exception:
         pass
 
-    # Now drop and recreate embedding column as FLOAT[384]
-    con.execute("ALTER TABLE emails DROP COLUMN IF EXISTS embedding")
-    con.execute("ALTER TABLE emails ADD COLUMN embedding FLOAT[384]")
-    print("embedding column reset to FLOAT[384].")
 
-    total = con.execute("SELECT COUNT(*) FROM emails").fetchone()[0]
-    print(f"Embedding {total:,} rows with all-MiniLM-L6-v2 (384 dim) ...")
-
-    BATCH = 256
-    processed = 0
-
-    while True:
-        rows = con.execute(
-            'SELECT "no", "subject", "plaintextbody" FROM emails '
-            "WHERE embedding IS NULL "
-            f"LIMIT {BATCH}"
-        ).fetchall()
-
-        if not rows:
-            break
-
-        texts = []
-        for _, subject, body in rows:
-            subject_str = subject or ""
-            body_str = (body or "")[:500]
-            texts.append(f"{subject_str} {body_str}".strip())
-
-        embeddings = model.encode(texts, normalize_embeddings=True).tolist()
-
-        for (row_no, _, _), embedding in zip(rows, embeddings):
-            con.execute(
-                'UPDATE emails SET embedding = ? WHERE "no" = ?',
-                [embedding, row_no],
-            )
-
-        processed += len(rows)
-        if processed % 5000 < BATCH:
-            print(f"  Progress: {processed:,} / {total:,} rows embedded")
-
-    print(f"\nEmbedding complete — {processed:,} rows updated.")
-
-    # Recreate regular indexes
+def _rebuild_indexes(con: duckdb.DuckDBPyConnection) -> None:
     con.execute('CREATE INDEX IF NOT EXISTS idx_month ON emails("month")')
     con.execute('CREATE INDEX IF NOT EXISTS idx_stage ON emails("stage")')
     con.execute('CREATE INDEX IF NOT EXISTS idx_site  ON emails("site")')
-    print("Regular indexes recreated.")
+    print("  B-tree indexes OK.")
 
-    # Recreate HNSW index
     try:
-        con.execute("INSTALL vss")
-        con.execute("LOAD vss")
-        con.execute("SET hnsw_enable_experimental_persistence=true")
+        con.execute("INSTALL vss; LOAD vss;")
+        con.execute("SET hnsw_enable_experimental_persistence = true")
         con.execute("DROP INDEX IF EXISTS idx_embedding_hnsw")
-        con.execute("""
+        con.execute(f"""
             CREATE INDEX idx_embedding_hnsw
             ON emails USING HNSW (embedding)
             WITH (metric = 'cosine')
         """)
-        print("HNSW index created (duckdb-vss).")
+        print("  HNSW index created.")
     except Exception as exc:
-        print(f"duckdb-vss not available — skipping HNSW index. ({exc})")
+        print(f"  HNSW skipped: {exc}")
 
-    # Recreate FTS index (overwrite=1)
     try:
-        con.execute("INSTALL fts")
-        con.execute("LOAD fts")
+        con.execute("INSTALL fts; LOAD fts;")
         con.execute("""
             PRAGMA create_fts_index(
                 'emails', 'no',
@@ -202,11 +134,161 @@ def add_embeddings(db_path: Path) -> None:
                 strip_accents=1, lower=1, overwrite=1
             )
         """)
-        print("FTS index recreated.")
+        print("  FTS index rebuilt.")
     except Exception as exc:
-        print(f"FTS index recreation failed: {exc}")
+        print(f"  FTS skipped: {exc}")
 
+
+# ══════════════════════════════════════════════════════════ Phase 2 ══
+def add_embeddings(db_path: Path) -> None:
+    """
+    Arrow staging table 패턴으로 FLOAT[384] 임베딩 추가.
+
+    흐름:
+      1. emb_staging(no PK, embedding) 테이블에 PyArrow INSERT 누적
+         → ON CONFLICT DO NOTHING으로 재시작 시 중복 스킵
+      2. 모든 배치 완료 후 단일 UPDATE JOIN emails ← emb_staging
+      3. emb_staging DROP + CHECKPOINT
+      4. HNSW + FTS + B-tree 인덱스 재생성
+
+    executemany UPDATE 루프를 사용하지 않으므로 WAL 과부하·SIGSEGV 없음.
+    """
+    import numpy as np
+    import pyarrow as pa
+    from sentence_transformers import SentenceTransformer
+
+    print(f"Loading {EMBED_MODEL} ...")
+    model = SentenceTransformer(EMBED_MODEL)
+
+    con = duckdb.connect(str(db_path))
+    total = con.execute("SELECT COUNT(*) FROM emails").fetchone()[0]
+
+    # ── 재시작 감지 ─────────────────────────────────────────────────
+    staging_exists = bool(
+        con.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_name = 'emb_staging'"
+        ).fetchone()
+    )
+    staging_count = (
+        con.execute("SELECT COUNT(*) FROM emb_staging").fetchone()[0]
+        if staging_exists else 0
+    )
+
+    if staging_count > 0:
+        print(f"  Resume: emb_staging already has {staging_count:,} rows. Continuing ...")
+    else:
+        print("  Fresh run: dropping indexes and resetting embedding column.")
+        _drop_indexes(con)
+        con.execute("ALTER TABLE emails DROP COLUMN IF EXISTS embedding")
+        con.execute(f"ALTER TABLE emails ADD COLUMN embedding FLOAT[{EMBED_DIM}]")
+        con.execute("DROP TABLE IF EXISTS emb_staging")
+        con.execute(f"""
+            CREATE TABLE emb_staging (
+                "no"       VARCHAR PRIMARY KEY,
+                embedding  FLOAT[{EMBED_DIM}]
+            )
+        """)
+
+    # ── Arrow batch INSERT 루프 ─────────────────────────────────────
+    #
+    # DuckDB 공식 권장: "avoid using lots of individual row-by-row INSERT
+    # statements" — Arrow 등록을 사용해 zero-copy bulk INSERT.
+    # ref: https://duckdb.org/docs/guides/python/import_arrow
+    #
+    fixed_list_type = pa.list_(pa.float32(), EMBED_DIM)  # FixedSizeList<384 x float32>
+    processed = staging_count
+    t0 = time.time()
+
+    print(f"Encoding {total:,} rows "
+          f"(ENCODE_BATCH={ENCODE_BATCH}, INSERT_CHUNK={INSERT_CHUNK}) ...")
+
+    while True:
+        rows = con.execute(
+            """
+            SELECT e."no", e.subject, e.plaintextbody
+            FROM   emails e
+            WHERE  NOT EXISTS (
+                       SELECT 1 FROM emb_staging s WHERE s."no" = e."no"
+                   )
+            LIMIT  ?
+            """,
+            [INSERT_CHUNK],
+        ).fetchall()
+
+        if not rows:
+            break
+
+        row_nos = [r[0] for r in rows]
+        texts   = [f"{r[1] or ''} {(r[2] or '')[:500]}".strip() for r in rows]
+
+        # sentence-transformers encode
+        # convert_to_numpy=True → numpy float32 배열 직접 반환 (list 변환 없음)
+        emb_np = model.encode(
+            texts,
+            batch_size=ENCODE_BATCH,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+            convert_to_numpy=True,
+        ).astype("float32")   # shape (N, EMBED_DIM)
+
+        # numpy (N, 384) → PyArrow FixedSizeListArray
+        flat = emb_np.flatten()   # (N * 384,) contiguous float32
+        emb_arrow = pa.FixedSizeListArray.from_arrays(
+            pa.array(flat, type=pa.float32()),
+            list_size=EMBED_DIM,
+        )
+        arrow_tbl = pa.table({
+            "no":        pa.array(row_nos, type=pa.string()),
+            "embedding": emb_arrow,
+        })
+
+        # DuckDB에 Arrow 테이블 등록 → 명시적 컬럼 매핑으로 컬럼 스왑 버그 방지
+        con.register("_emb_view", arrow_tbl)
+        con.execute(
+            'INSERT INTO emb_staging ("no", embedding) '
+            'SELECT "no", embedding FROM _emb_view '
+            'ON CONFLICT DO NOTHING'
+        )
+        con.unregister("_emb_view")
+
+        processed += len(rows)
+
+        if processed % 5_000 < INSERT_CHUNK:
+            elapsed = time.time() - t0
+            rate    = processed / elapsed if elapsed > 0 else 1
+            eta_min = (total - processed) / rate / 60
+            print(
+                f"  {processed:,}/{total:,} | {rate:.0f} rows/s | ETA {eta_min:.1f}min",
+                flush=True,
+            )
+
+        # WAL 주기적 flush → 파일 크기 안정화
+        if processed % 10_000 < INSERT_CHUNK:
+            con.execute("CHECKPOINT")
+            print(f"  [CHECKPOINT] {processed:,} rows flushed to disk", flush=True)
+
+    # ── 단일 UPDATE JOIN (emb_staging → emails) ─────────────────────
+    staged = con.execute("SELECT COUNT(*) FROM emb_staging").fetchone()[0]
+    print(f"\nFinal UPDATE: {staged:,} staged embeddings → emails.embedding ...")
+    con.execute("""
+        UPDATE emails
+        SET    embedding = s.embedding
+        FROM   emb_staging s
+        WHERE  emails."no" = s."no"
+    """)
+    con.execute("DROP TABLE emb_staging")
+    con.execute("CHECKPOINT")
+
+    done = con.execute(
+        "SELECT COUNT(*) FROM emails WHERE embedding IS NOT NULL"
+    ).fetchone()[0]
+    print(f"Embedded: {done:,} / {total:,}")
+
+    # ── 인덱스 재생성 ────────────────────────────────────────────────
+    _rebuild_indexes(con)
+    con.execute("CHECKPOINT")
     con.close()
+    print("Phase 2 done.")
 
 
 if __name__ == "__main__":
