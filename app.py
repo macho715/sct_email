@@ -11,9 +11,9 @@ import plotly.graph_objects as go
 from pathlib import Path
 
 # ── DB 설정 ─────────────────────────────────────────────────────────
-DB_URL   = "https://github.com/macho715/sct_email/releases/download/v2.0/hvdc_mail.duckdb"
-DB_LOCAL = Path("/tmp/hvdc_mail_v2.duckdb")
-_DB_TMP  = Path("/tmp/hvdc_mail_v2.duckdb.tmp")
+DB_URL   = "https://github.com/macho715/sct_email/releases/download/v2.1/hvdc_mail.duckdb"
+DB_LOCAL = Path("/tmp/hvdc_mail_v21.duckdb")       # v2.1: multilingual embeddings
+_DB_TMP  = Path("/tmp/hvdc_mail_v21.duckdb.tmp")   # path bump forces re-download
 
 # ── 브랜드 색상 (Samsung C&T Navy) ──────────────────────────────────
 _SEQ = [
@@ -583,7 +583,9 @@ def summarize_with_gemini(subject: str, body: str, api_key: str) -> str:
 @st.cache_resource(show_spinner=False)
 def _get_st_model():
     from sentence_transformers import SentenceTransformer
-    return SentenceTransformer("all-MiniLM-L6-v2")
+    # Multilingual (50+ langs incl. Korean), 384d — matches build_db.py EMBED_MODEL.
+    # Korean queries embed natively; no Korean→English translation needed.
+    return SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
 
 
 def get_query_embedding(query: str, api_key: str = ""):
@@ -1858,14 +1860,8 @@ with tab_semantic:
         use_hybrid = st.checkbox(T["sem_hybrid"], value=True)
 
         if sem_query and st.button(T["sem_run"]):
+            # Multilingual model embeds Korean natively — no translation step.
             _embed_query = sem_query
-            if any('가' <= c <= '힣' for c in sem_query):
-                if google_api_key:
-                    with st.spinner(T["sem_translate"]):
-                        _embed_query = _translate_ko_to_en(sem_query, google_api_key)
-                    st.caption(f"{T['sem_translated']}: **{_embed_query}**")
-                else:
-                    st.caption(T["sem_no_key_translate"])
             with st.spinner(T["sem_embedding"]):
                 qvec = get_query_embedding(_embed_query)
 

@@ -9,8 +9,17 @@ v2 개선 (2026-06-28) — Arrow staging table 패턴:
   - 재시작 시 emb_staging 기반 자동 재개 (ON CONFLICT DO NOTHING)
 """
 import re
+import sys
 import time
 from pathlib import Path
+
+# Windows console defaults to cp949 (Korean) which can't encode em-dash etc. in
+# progress prints — force UTF-8 so the build doesn't crash before embeddings run.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 
 import duckdb
 import openpyxl
@@ -18,7 +27,7 @@ import openpyxl
 XLSX = Path(__file__).parent / "OUTLOOK_HVDC.xlsx"
 DB   = Path(__file__).parent / "hvdc_mail.duckdb"
 
-EMBED_MODEL  = "all-MiniLM-L6-v2"
+EMBED_MODEL  = "paraphrase-multilingual-MiniLM-L12-v2"  # 50+ langs incl. Korean, 384d
 EMBED_DIM    = 384
 ENCODE_BATCH = 512    # sentence-transformers encode batch (CPU 최적)
 INSERT_CHUNK = 2048   # 한 번에 fetch·insert 할 행 수
@@ -95,11 +104,10 @@ def _drop_indexes(con: duckdb.DuckDBPyConnection) -> None:
             con.execute(sql)
         except Exception:
             pass
-    try:
-        con.execute("INSTALL fts; LOAD fts;")
-        con.execute("PRAGMA drop_fts_index('emails')")
-    except Exception:
-        pass
+    # NOTE: do NOT drop_fts_index here — it deletes the 'stopwords' dependency and
+    # poisons the session, making the later create_fts_index fail on commit
+    # ("subject stopwords has been deleted"). create_fts_index(overwrite=1) in
+    # _rebuild_indexes already replaces any existing index cleanly.
 
 
 def _rebuild_indexes(con: duckdb.DuckDBPyConnection) -> None:
