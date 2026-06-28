@@ -82,6 +82,7 @@ _T = {
         "col_pdf": "PDF",
         "email_detail": "본문 보기",
         "select_email": "메일 선택 (no 번호)",
+        "detail_not_found": "선택한 메일 본문을 찾지 못했습니다. 검색을 다시 실행하거나 다른 메일을 선택해 주세요.",
         "btn_pdf": "첨부 PDF 열기 (Google Drive)",
         "btn_pdf_download": "PDF 다운로드",
         "pdf_folder_alt": "첨부 PDF 폴더 (날짜별로 분할 저장):",
@@ -227,6 +228,7 @@ _T = {
         "col_pdf": "PDF",
         "email_detail": "Email Detail",
         "select_email": "Select email (no)",
+        "detail_not_found": "Could not find the selected email body. Refresh the search or choose another email.",
         "btn_pdf": "Open PDF Attachment (Google Drive)",
         "btn_pdf_download": "Download PDF",
         "pdf_folder_alt": "PDF Attachment Folders (split by date):",
@@ -556,6 +558,18 @@ def _clean_id_value(value) -> str:
     if text.endswith(".0"):
         return text[:-2]
     return text
+
+
+def _id_lookup_where(column: str = "no") -> str:
+    normalized = f"regexp_replace(CAST({column} AS VARCHAR), '\\.0+$', '')"
+    return f"(CAST({column} AS VARCHAR) = ? OR {normalized} = ?)"
+
+
+def _id_lookup_params(value) -> list[str]:
+    if pd.isna(value):
+        return ["", ""]
+    raw = str(value).strip()
+    return [raw, _clean_id_value(raw)]
 
 
 def _clean_id_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -1725,21 +1739,27 @@ with tab_search:
                     st.info("Gemini가 조건을 인식하지 못했습니다. 더 구체적으로 입력해 주세요.")
 
         st.subheader(T["email_detail"])
+        detail_subjects = {}
+        for _, _detail_row in df.head(50).iterrows():
+            _detail_no = _clean_id_value(_detail_row.get("no", ""))
+            if not _detail_no or _detail_no in detail_subjects:
+                continue
+            detail_subjects[_detail_no] = str(_detail_row.get("subject", "") or "")
         row_no = st.selectbox(
             T["select_email"],
-            options=df["no"].tolist()[:50],
+            options=list(detail_subjects),
             format_func=lambda x: (
-                f"#{_clean_id_value(x)}  "
-                + (df.loc[df["no"] == x, "subject"].values[0][:60]
-                   if not df.loc[df["no"] == x, "subject"].empty else "")
+                f"#{x}  "
+                + detail_subjects.get(x, "")[:60]
             ),
         )
         if row_no:
             row_no_key = _clean_id_value(row_no)
             body_df = run_query(
                 "SELECT subject, sendername, senderemail, deliverytime, "
-                "recipientto, plaintextbody, linkkey, primary_case FROM emails WHERE no = ?",
-                [row_no_key],
+                "recipientto, plaintextbody, linkkey, primary_case "
+                f"FROM emails WHERE {_id_lookup_where('no')}",
+                _id_lookup_params(row_no_key),
             )
             if not body_df.empty:
                 r = body_df.iloc[0]
@@ -1801,8 +1821,8 @@ with tab_search:
                 if has_embeddings():
                     with st.expander(T["sim_header"]):
                         _emb_row = run_query(
-                            "SELECT embedding FROM emails WHERE no = ?",
-                            [row_no_key],
+                            f"SELECT embedding FROM emails WHERE {_id_lookup_where('no')}",
+                            _id_lookup_params(row_no_key),
                         )
                         if _emb_row.empty or _emb_row.iloc[0, 0] is None:
                             st.caption(T["sim_no_emb"])
@@ -1814,9 +1834,9 @@ with tab_search:
                                 _sim_df = run_query(
                                     "SELECT no, subject, sendername, deliverytime, company_name, "
                                     "array_cosine_similarity(embedding, ?::FLOAT[384]) AS sim_score "
-                                    "FROM emails WHERE no != ? AND embedding IS NOT NULL "
+                                    f"FROM emails WHERE NOT {_id_lookup_where('no')} AND embedding IS NOT NULL "
                                     "ORDER BY sim_score DESC LIMIT 5",
-                                    [_evec, row_no_key],
+                                    [_evec] + _id_lookup_params(row_no_key),
                                 )
                             if not _sim_df.empty:
                                 st.dataframe(
@@ -1869,8 +1889,9 @@ with tab_search:
                     with st.expander(f"{T['btn_sender_history']}: {_sender_name_val}"):
                         _sender_df = run_query(
                             "SELECT no, deliverytime, subject, hvdc_cases FROM emails "
-                            "WHERE senderemail = ? AND no != ? ORDER BY deliverytime DESC LIMIT 20",
-                            [str(_sender_email_val), row_no_key],
+                            f"WHERE senderemail = ? AND NOT {_id_lookup_where('no')} "
+                            "ORDER BY deliverytime DESC LIMIT 20",
+                            [str(_sender_email_val)] + _id_lookup_params(row_no_key),
                         )
                         if not _sender_df.empty:
                             st.caption(f"**{len(_sender_df)}건**")
@@ -1884,6 +1905,8 @@ with tab_search:
                                     "hvdc_cases": st.column_config.TextColumn(T["col_cases"], width=150),
                                 },
                             )
+            else:
+                st.warning(T["detail_not_found"])
 
         st.divider()
         st.download_button(
