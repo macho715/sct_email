@@ -2,6 +2,7 @@
 HVDC Email Search — Streamlit + DuckDB  v2.0
 Features: BM25 Search | Gemini AI Summary | Case Thread | Network Graph | Semantic Search
 """
+import warnings
 import requests
 import duckdb
 import streamlit as st
@@ -480,6 +481,23 @@ hr { border-color: #E2E8F0 !important; margin: 10px 0 !important; }
 ::-webkit-scrollbar-track { background: #F1F5F9; border-radius: 3px; }
 ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+
+/* ─── MOBILE OPTIMIZATIONS (ui-ux-pro-max P1/P2/P5) ─── */
+/* P1: iOS auto-zoom prevention — input font-size must be ≥16px */
+input, textarea, [data-testid="stTextInput"] input,
+[data-testid="stTextArea"] textarea { font-size: 16px !important; }
+/* P2: Touch targets ≥44px */
+.stButton > button { min-height: 44px !important; padding: 0 1rem !important; }
+.stTabs [role="tab"] { min-height: 44px !important; }
+[data-testid="stDownloadButton"] > button { min-height: 44px !important; }
+/* P5: Mobile layout — hide sidebar, single-column content */
+@media (max-width: 768px) {
+    section[data-testid="stSidebar"] { display: none !important; }
+    [data-testid="block-container"] { padding: 0.75rem 0.75rem 1rem !important; }
+    .hvdc-header { padding: 12px 14px !important; }
+    .hvdc-header-title { font-size: 1.1rem !important; }
+    .hvdc-header-badge { display: none !important; }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -494,8 +512,8 @@ def _ensure_fts_extension():
     try:
         try:
             tmp.execute("INSTALL fts;")
-        except Exception:
-            pass
+        except Exception as _e:
+            warnings.warn(f"FTS INSTALL skipped: {_e}")
         tmp.execute("LOAD fts;")
     finally:
         tmp.close()
@@ -1059,7 +1077,8 @@ def _nl_to_sql(text: str, api_key: str):
         _where = str(_obj.get("where", ""))
         _params = list(_obj.get("params", []))
         _where_upper = _where.upper()
-        for _bad in ["DROP", "DELETE", "INSERT", "UPDATE", "EXEC", "UNION", "ALTER", "--", ";"]:
+        for _bad in ["DROP", "DELETE", "INSERT", "UPDATE", "EXEC", "UNION", "ALTER", "--", ";",
+                     "OR 1=1", "OR 1 =1", "OR TRUE", "' OR '", "\"OR\""]:
             if _bad in _where_upper:
                 return "", []
         _first_col = _re.split(r'[\s(]', _where_upper.strip())[0]
