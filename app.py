@@ -903,6 +903,33 @@ hr {
 ::-webkit-scrollbar-thumb:hover { background: #A8A29E; }
 
 @media (max-width: 768px) {
+    /* ─── Sidebar — always visible, stacked above main content ─── */
+    [data-testid="stAppViewContainer"] {
+        flex-direction: column !important;
+    }
+    [data-testid="stSidebar"] {
+        position: relative !important;
+        transform: none !important;
+        width: 100% !important;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        height: auto !important;
+        min-height: auto !important;
+        z-index: 1 !important;
+        border-right: none !important;
+        border-bottom: 1px solid var(--hvdc-border) !important;
+    }
+    [data-testid="stSidebarUserContent"],
+    [data-testid="stSidebarContent"] {
+        padding: 0.75rem 0.85rem !important;
+        min-height: auto !important;
+    }
+    /* Hide collapse/hamburger button — sidebar is always open */
+    [data-testid="collapsedControl"],
+    [data-testid="stSidebarCollapsedControl"] {
+        display: none !important;
+    }
+
     /* ─── Layout ─── */
     [data-testid="block-container"] {
         padding: 0.6rem 0.6rem 1.2rem !important;
