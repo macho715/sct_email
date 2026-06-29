@@ -525,13 +525,7 @@ input, textarea, [data-testid="stTextInput"] input,
 .stButton > button { min-height: 44px !important; padding: 0 1rem !important; }
 .stTabs [role="tab"] { min-height: 44px !important; }
 [data-testid="stDownloadButton"] > button { min-height: 44px !important; }
-/* P5: Mobile layout — keep sidebar controls available on phones */
-@media (max-width: 768px) {
-    [data-testid="block-container"] { padding: 0.75rem 0.75rem 1rem !important; }
-    .hvdc-header { padding: 12px 14px !important; }
-    .hvdc-header-title { font-size: 1.1rem !important; }
-    .hvdc-header-badge { display: none !important; }
-}
+/* P5: Mobile layout — handled by the comprehensive @media block in the SUPANOVA section below */
 
 /* ─── SUPANOVA OPS REDESIGN ─── */
 :root {
@@ -812,16 +806,26 @@ p, li, label, span, div {
 [data-testid="stSelectbox"] div[data-baseweb="select"] > div,
 [data-testid="stNumberInput"] input,
 textarea {
-    background: rgba(250,250,249,0.05) !important;
-    color: var(--hvdc-text) !important;
+    background: #18181B !important;
+    color: #FAFAF9 !important;
     border: 1px solid var(--hvdc-border) !important;
     border-radius: 8px !important;
+    caret-color: var(--hvdc-accent) !important;
+}
+
+[data-testid="stTextInput"] input::placeholder,
+[data-testid="stTextArea"] textarea::placeholder,
+[data-testid="stNumberInput"] input::placeholder {
+    color: #78716C !important;
+    opacity: 1 !important;
 }
 
 [data-testid="stTextInput"] input:focus,
-[data-testid="stTextArea"] textarea:focus {
+[data-testid="stTextArea"] textarea:focus,
+[data-testid="stNumberInput"] input:focus {
     border-color: var(--hvdc-accent) !important;
     box-shadow: 0 0 0 3px rgba(242,183,5,0.16) !important;
+    background: #1C1C1F !important;
 }
 
 .stButton > button,
@@ -899,30 +903,113 @@ hr {
 ::-webkit-scrollbar-thumb:hover { background: #A8A29E; }
 
 @media (max-width: 768px) {
+    /* ─── Layout ─── */
     [data-testid="block-container"] {
-        padding: 0.85rem 0.85rem 1.4rem !important;
+        padding: 0.6rem 0.6rem 1.2rem !important;
+        max-width: 100vw !important;
     }
+
+    /* ─── Header ─── */
     .hvdc-header {
         min-height: auto;
         display: grid;
         grid-template-columns: auto 1fr;
-        padding: 20px 18px !important;
+        gap: 12px 14px;
+        padding: 16px 14px !important;
+        margin-bottom: 0.9rem;
     }
     .hvdc-header-mark {
-        width: 48px;
-        height: 48px;
-        font-size: 0.82rem;
+        width: 44px;
+        height: 44px;
+        flex: 0 0 44px;
+        font-size: 0.78rem;
     }
-    .hvdc-header-title {
-        font-size: 2rem !important;
-    }
+    .hvdc-header-kicker { font-size: 0.62rem; margin-bottom: 4px; }
+    .hvdc-header-title { font-size: clamp(1.35rem, 6vw, 2rem) !important; line-height: 1.12; }
+    .hvdc-header-caption { font-size: 0.82rem; margin-top: 6px; }
     .hvdc-header-status {
         grid-column: 1 / -1;
         justify-items: start;
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 6px;
     }
-    .hvdc-header-badge {
-        display: inline-flex !important;
+    .hvdc-header-badge { display: inline-flex !important; font-size: 0.66rem; padding: 5px 10px; }
+    .hvdc-header-live  { font-size: 0.64rem; padding: 4px 9px; }
+
+    /* ─── Tabs — horizontal scroll on small screens ─── */
+    .stTabs [data-baseweb="tab-list"] {
+        overflow-x: auto !important;
+        flex-wrap: nowrap !important;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
     }
+    .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar { display: none; }
+    .stTabs [role="tab"] {
+        min-width: max-content !important;
+        white-space: nowrap !important;
+        padding: 6px 12px !important;
+        font-size: 0.8rem !important;
+    }
+
+    /* ─── Inputs & selects — full width, comfortable touch ─── */
+    [data-testid="stTextInput"] input,
+    [data-testid="stNumberInput"] input,
+    [data-testid="stTextArea"] textarea,
+    [data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
+    [data-testid="stSelectbox"] div[data-baseweb="select"] > div {
+        min-height: 44px !important;
+        padding: 10px 12px !important;
+    }
+
+    /* ─── Buttons ─── */
+    .stButton > button,
+    [data-testid="stDownloadButton"] > button {
+        width: 100% !important;
+        min-height: 48px !important;
+        font-size: 0.88rem !important;
+    }
+
+    /* ─── Metric cards — 2-up grid on mobile ─── */
+    [data-testid="stMetric"] {
+        min-height: auto !important;
+        padding: 12px 14px !important;
+    }
+    [data-testid="stMetricValue"] { font-size: 1.3rem !important; }
+    [data-testid="stMetricLabel"] { font-size: 0.64rem !important; }
+
+    /* ─── Email cards ─── */
+    .email-card { padding: 10px 12px; }
+    .email-card-subject { font-size: 0.88rem; }
+    .email-card-meta { flex-wrap: wrap; gap: 4px; font-size: 0.72rem; }
+    .email-card-snippet { font-size: 0.76rem; }
+
+    /* ─── AI summary card ─── */
+    .ai-summary-card { padding: 12px 14px; font-size: 0.82rem; }
+
+    /* ─── DataFrames — horizontal scroll ─── */
+    [data-testid="stDataFrame"] { overflow-x: auto !important; }
+
+    /* ─── Panel title ─── */
+    .hvdc-panel-title { padding: 12px 14px; }
+    .hvdc-panel-title strong { font-size: 0.94rem; }
+    .hvdc-panel-title span  { font-size: 0.82rem; }
+
+    /* ─── Sidebar label ─── */
+    .sidebar-label { font-size: 0.62rem; }
+
+    /* ─── General text ─── */
+    p, li { font-size: 0.88rem !important; }
+    h1 { font-size: 1.4rem !important; }
+    h2 { font-size: 1.15rem !important; }
+    h3 { font-size: 1rem !important; }
+}
+
+@media (max-width: 480px) {
+    [data-testid="block-container"] { padding: 0.5rem 0.4rem 1rem !important; }
+    .hvdc-header { padding: 12px 10px !important; gap: 10px 10px; }
+    .hvdc-header-title { font-size: clamp(1.1rem, 7vw, 1.5rem) !important; }
+    .hvdc-header-caption { display: none; }
 }
 </style>
 """, unsafe_allow_html=True)
