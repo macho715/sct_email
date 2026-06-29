@@ -1052,6 +1052,55 @@ hr {
     .hvdc-header-title { font-size: clamp(1.1rem, 7vw, 1.5rem) !important; }
     .hvdc-header-caption { display: none; }
 }
+
+/* ─── TOUCH & POINTER OPTIMIZATION ─── */
+/* Prevent iOS text inflation on rotate; subtle branded tap highlight */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+html, body { -webkit-tap-highlight-color: rgba(242, 183, 5, 0.18); }
+
+/* Touch devices (no hover): neutralize hover-lift so a tap doesn't leave a stuck state */
+@media (hover: none) {
+    .stButton > button:hover,
+    .stLinkButton > a:hover,
+    [data-testid="stDownloadButton"] > button:hover {
+        transform: none !important;
+    }
+    .email-card:hover {
+        transform: none !important;
+        border-color: var(--hvdc-border) !important;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.08) !important;
+    }
+}
+
+/* Coarse pointer (finger/stylus): 44px touch targets at any width, not just <768px */
+@media (pointer: coarse) {
+    .stButton > button,
+    .stLinkButton > a,
+    [data-testid="stDownloadButton"] > button,
+    [data-testid="stTextInput"] input,
+    [data-testid="stNumberInput"] input,
+    [data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
+    [data-testid="stSelectbox"] div[data-baseweb="select"] > div {
+        min-height: 44px !important;
+    }
+}
+
+/* Respect the home-indicator / bottom safe area on notched phones */
+@media (max-width: 768px) {
+    [data-testid="block-container"] {
+        padding-bottom: max(1.2rem, env(safe-area-inset-bottom)) !important;
+    }
+}
+
+/* Reduced motion: honor the OS preference (cuts hover/transition choreography) */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
 </style>
 """, unsafe_allow_html=True)
 
