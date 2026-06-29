@@ -10,11 +10,15 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
+from db_integrity import verify_duckdb_file
+from nl_query import ALLOWED_NL_FIELDS, build_where_from_filter_dsl, parse_filter_dsl_response
 
 # ── DB 설정 ─────────────────────────────────────────────────────────
 DB_URL   = "https://github.com/macho715/sct_email/releases/download/v2.1/hvdc_mail.duckdb"
 DB_LOCAL = Path("/tmp/hvdc_mail_v21.duckdb")       # v2.1: multilingual embeddings
 _DB_TMP  = Path("/tmp/hvdc_mail_v21.duckdb.tmp")   # path bump forces re-download
+EXPECTED_DB_SHA256 = "ab1718b94cebec60cba359bc5e2237f226d83fea6277463d09660f9b17957707"
+MAX_DB_BYTES = 600 * 1024 * 1024
 
 # ── 브랜드 색상 (HVDC dark operations theme) ────────────────────────
 _SEQ = [
@@ -2196,45 +2200,27 @@ def _key_decisions_query():
 
 
 def _nl_to_sql(text: str, api_key: str):
-    """Natural language → parameterized SQL WHERE clause via Gemini Flash.
+    """Natural language -> validated filter DSL -> parameterized SQL WHERE.
     Returns (where_clause, params) or ('', []) on failure.
     """
-    _ALLOWED_COLS = {
-        "deliverytime", "sendername", "senderemail", "company_name",
-        "site", "stage", "month", "hvdc_cases", "subject",
-    }
+    _ALLOWED_COLS = ALLOWED_NL_FIELDS
     try:
-        import json as _json
-        import re as _re
         from google import genai as _genai
         _client = _genai.Client(api_key=api_key)
         _sys = (
-            "SQL WHERE clause generator for HVDC email database. "
+            "Filter generator for HVDC email database. "
             f"Allowed columns: {sorted(_ALLOWED_COLS)}. "
-            'Return JSON only: {"where": "col OPERATOR ?", "params": ["val"]}. '
-            "Use ? placeholders for all values. ILIKE for text (add % to param). "
-            "BETWEEN for date ranges with two params. "
-            'Impossible: {"where": "", "params": []}. No markdown.'
+            "Allowed ops: eq, neq, ilike, not_ilike, in, gte, lte, gt, lt, between. "
+            'Return JSON only: {"logic":"and","filters":[{"field":"sendername","op":"ilike","value":"Mammoet"}]}. '
+            "Use ISO date strings for deliverytime date ranges. "
+            'Impossible: {"filters": []}. Do not return SQL, markdown, where, or params.'
         )
         _resp = _client.models.generate_content(
             model="gemini-2.5-flash",
             contents=f"{_sys}\n\nRequest: {text}",
         )
-        _m = _re.search(r'\{.*?\}', _resp.text.strip(), _re.DOTALL)
-        if not _m:
-            return "", []
-        _obj = _json.loads(_m.group())
-        _where = str(_obj.get("where", ""))
-        _params = list(_obj.get("params", []))
-        _where_upper = _where.upper()
-        for _bad in ["DROP", "DELETE", "INSERT", "UPDATE", "EXEC", "UNION", "ALTER", "--", ";",
-                     "OR 1=1", "OR 1 =1", "OR TRUE", "' OR '", "\"OR\""]:
-            if _bad in _where_upper:
-                return "", []
-        _first_col = _re.split(r'[\s(]', _where_upper.strip())[0]
-        if _first_col and _first_col not in {c.upper() for c in _ALLOWED_COLS}:
-            return "", []
-        return _where, _params
+        _obj = parse_filter_dsl_response(_resp.text)
+        return build_where_from_filter_dsl(_obj)
     except Exception:
         return "", []
 
@@ -2270,14 +2256,26 @@ if not DB_LOCAL.exists():
             with requests.get(DB_URL, stream=True, timeout=(30, 900)) as _r:
                 _r.raise_for_status()
                 _total = int(_r.headers.get("content-length", 0))
+                if _total > MAX_DB_BYTES:
+                    raise ValueError(f"DB download too large: {_total} > {MAX_DB_BYTES}")
                 _downloaded = 0
                 with open(_DB_TMP, "wb") as _f:
                     for _chunk in _r.iter_content(chunk_size=256 * 1024):
+                        if not _chunk:
+                            continue
                         _f.write(_chunk)
                         _downloaded += len(_chunk)
+                        if _downloaded > MAX_DB_BYTES:
+                            raise ValueError(f"DB download exceeded max size: {_downloaded} > {MAX_DB_BYTES}")
                         if _total:
                             _pct = min(int(_downloaded / _total * 100), 100)
                             _bar.progress(_pct, text=f"{_downloaded//1024//1024} MB / {_total//1024//1024} MB")
+            verify_duckdb_file(
+                _DB_TMP,
+                expected_sha256=EXPECTED_DB_SHA256,
+                max_bytes=MAX_DB_BYTES,
+                required_table="emails",
+            )
             _DB_TMP.rename(DB_LOCAL)
             _status.update(label=f"OK - {T['db_ok']}", state="complete")
         except Exception as _exc:
