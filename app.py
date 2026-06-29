@@ -33,6 +33,15 @@ _PIE_COLORS = [
     "#F4D03F", "#E67E22", "#A569BD", "#7F8C8D",
 ]
 
+DELIVERY_DESC_SQL = (
+    'ORDER BY try_cast("deliverytime" AS TIMESTAMP) DESC NULLS LAST, '
+    'try_cast("no" AS BIGINT) DESC NULLS LAST'
+)
+DELIVERY_ASC_SQL = (
+    'ORDER BY try_cast("deliverytime" AS TIMESTAMP) ASC NULLS LAST, '
+    'try_cast("no" AS BIGINT) ASC NULLS LAST'
+)
+
 # ── 다국어 텍스트 ─────────────────────────────────────────────────────
 _T = {
     "ko": {
@@ -72,6 +81,7 @@ _T = {
             "- 필터 조건을 줄이면 더 많은 결과가 나올 수 있습니다."
         ),
         "no_results_empty": "왼쪽 사이드바에서 키워드 또는 필터를 입력하면 이메일을 검색합니다.",
+        "col_no": "번호",
         "col_subject": "제목",
         "col_sender": "발신자",
         "col_received": "수신일시",
@@ -219,6 +229,7 @@ _T = {
             "- Reduce filter conditions to broaden results."
         ),
         "no_results_empty": "Enter a keyword or select filters in the left sidebar to search emails.",
+        "col_no": "No.",
         "col_subject": "Subject",
         "col_sender": "Sender",
         "col_received": "Received",
@@ -582,6 +593,116 @@ def _clean_id_columns(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+SITE_FILTER_DEFINITIONS = (
+    ("AGI", "AL GHALLAN ISLAND", ("AGI", "AL GHALLAN ISLAND", "GHALLAN")),
+    ("DAS", "DAS ISLAND", ("DAS", "DAS ISLAND")),
+    ("SHU", "SHUWEIHAT", ("SHU", "SHUWEIHAT")),
+    ("MIR", "MIRFA", ("MIR", "MIRFA")),
+)
+
+
+def _norm_site_value(value) -> str:
+    if pd.isna(value):
+        return ""
+    text = str(value).strip()
+    if not text or text.casefold() in {"none", "nan", "unknown", "unclassified"}:
+        return ""
+    return text.casefold()
+
+
+def _site_label(code: str, full_name: str) -> str:
+    return f"{code} ({full_name})"
+
+
+SITE_FILTER_LABELS = tuple(
+    _site_label(code, full_name) for code, full_name, _ in SITE_FILTER_DEFINITIONS
+)
+SITE_CODE_BY_LABEL = {
+    _site_label(code, full_name): code for code, full_name, _ in SITE_FILTER_DEFINITIONS
+}
+SITE_LABEL_BY_CODE = {
+    code: _site_label(code, full_name) for code, full_name, _ in SITE_FILTER_DEFINITIONS
+}
+SITE_ALIASES_BY_CODE = {
+    code: tuple(
+        dict.fromkeys(
+            alias_norm
+            for alias_norm in (_norm_site_value(alias) for alias in aliases)
+            if alias_norm
+        )
+    )
+    for code, _, aliases in SITE_FILTER_DEFINITIONS
+}
+SITE_CODE_BY_ALIAS = {
+    alias: code
+    for code, aliases in SITE_ALIASES_BY_CODE.items()
+    for alias in aliases
+}
+
+
+def _canonical_site_code(value) -> str:
+    return SITE_CODE_BY_ALIAS.get(_norm_site_value(value), "")
+
+
+def _display_site_value(value) -> str:
+    code = _canonical_site_code(value)
+    if code:
+        return code
+    text = "" if pd.isna(value) else str(value).strip()
+    return "" if _norm_site_value(text) == "" else text
+
+
+def _display_first_site(row: pd.Series) -> str:
+    for col in ("primary_site", "sites", "site"):
+        value = _display_site_value(row.get(col, ""))
+        if value:
+            return value
+    return ""
+
+
+def _format_datetime_value(value) -> str:
+    if pd.isna(value):
+        return ""
+    dt = pd.to_datetime(value, errors="coerce")
+    if pd.notna(dt):
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    return str(value).strip()
+
+
+def _format_result_columns(df: pd.DataFrame) -> pd.DataFrame:
+    out = _clean_id_columns(df)
+    for col in ["deliverytime", "creationtime"]:
+        if col in out.columns:
+            out[col] = out[col].apply(_format_datetime_value)
+    for col in ["site", "sites", "primary_site"]:
+        if col in out.columns:
+            out[col] = out[col].apply(_display_site_value)
+    return out
+
+
+def _site_filter_clause(selected_sites: list[str], available_cols: set[str]) -> tuple[str, list[str]]:
+    selected_codes = [
+        SITE_CODE_BY_LABEL.get(site, _canonical_site_code(site) or str(site).strip())
+        for site in selected_sites
+    ]
+    aliases: list[str] = []
+    for code in selected_codes:
+        aliases.extend(SITE_ALIASES_BY_CODE.get(code, (_norm_site_value(code),)))
+    aliases = [alias for alias in dict.fromkeys(aliases) if alias]
+    if not aliases:
+        return "", []
+
+    site_cols = [col for col in ("site", "sites", "primary_site") if col in available_cols]
+    if not site_cols:
+        site_cols = ["site"]
+    placeholders = ", ".join(["?"] * len(aliases))
+    clauses = [
+        f"lower(trim(coalesce(CAST(\"{col}\" AS VARCHAR), ''))) IN ({placeholders})"
+        for col in site_cols
+    ]
+    return "(" + " OR ".join(clauses) + ")", aliases * len(site_cols)
+
+
 # ── 필터 옵션 로드 ────────────────────────────────────────────────
 @st.cache_data(ttl=3600)
 def load_filter_options():
@@ -590,9 +711,7 @@ def load_filter_options():
         "SELECT DISTINCT month FROM emails WHERE month IS NOT NULL ORDER BY month"
     ).fetchall()]
     months = [str(m).replace(".0", "") for m in months]
-    sites  = [r[0] for r in con.execute(
-        "SELECT DISTINCT site  FROM emails WHERE site  IS NOT NULL ORDER BY site"
-    ).fetchall()]
+    sites = list(SITE_FILTER_LABELS)
     stages = [r[0] for r in con.execute(
         "SELECT DISTINCT stage FROM emails WHERE stage IS NOT NULL ORDER BY stage"
     ).fetchall()]
@@ -1360,7 +1479,7 @@ def _key_decisions_query():
         "SELECT no, deliverytime, subject, sendername, company_name, hvdc_cases "
         "FROM emails "
         "WHERE fts_main_emails.match_bm25(no, ?) IS NOT NULL "
-        "ORDER BY deliverytime DESC LIMIT 10",
+        f"{DELIVERY_DESC_SQL} LIMIT 10",
         [_kw],
     )
 
@@ -1473,7 +1592,7 @@ with st.sidebar:
     _lc1, _lc2 = st.columns(2)
     if _lc1.button(
         "KO",
-        use_container_width=True,
+        width="stretch",
         type="primary" if st.session_state.lang == "ko" else "secondary",
         key="btn_lang_ko",
     ):
@@ -1481,7 +1600,7 @@ with st.sidebar:
         st.rerun()
     if _lc2.button(
         "EN",
-        use_container_width=True,
+        width="stretch",
         type="primary" if st.session_state.lang == "en" else "secondary",
         key="btn_lang_en",
     ):
@@ -1532,7 +1651,7 @@ with st.sidebar:
             st.code(f"Path: {DB_LOCAL}\nNot found ✗", language="text")
 
     _confirm_reset = st.checkbox(T["confirm_reset"])
-    if st.button(T["btn_reset"], use_container_width=True, disabled=not _confirm_reset):
+    if st.button(T["btn_reset"], width="stretch", disabled=not _confirm_reset):
         st.cache_data.clear()
         st.cache_resource.clear()
         DB_LOCAL.unlink(missing_ok=True)
@@ -1554,8 +1673,8 @@ tab_search, tab_analytics, tab_semantic = st.tabs([
 with tab_search:
 
     BASE_COLS_SHOW = [
-        "no", "month", "subject", "sendername", "senderemail",
-        "company_name", "recipientto", "deliverytime",
+        "no", "deliverytime", "month", "subject", "sendername", "senderemail",
+        "company_name", "recipientto",
         "site", "stage", "hvdc_cases", "primary_case", "linkkey",
     ]
     SEARCH_HELPER_COLS = ["case_numbers", "lpo_numbers", "rowkey"]
@@ -1615,9 +1734,10 @@ with tab_search:
         PARAMS.extend(sel_months)
 
     if sel_sites:
-        ph = ", ".join(["?"] * len(sel_sites))
-        WHERE.append(f'"site" IN ({ph})')
-        PARAMS.extend(sel_sites)
+        site_clause, site_params = _site_filter_clause(sel_sites, _available_cols)
+        if site_clause:
+            WHERE.append(site_clause)
+            PARAMS.extend(site_params)
 
     if sel_stages:
         ph = ", ".join(["?"] * len(sel_stages))
@@ -1649,7 +1769,7 @@ with tab_search:
             ep = [bm25_order_term]
         else:
             sc = ""
-            ob = 'ORDER BY "deliverytime" DESC'
+            ob = DELIVERY_DESC_SQL
             ep = []
         sql = f"SELECT {col_list}{sc} FROM emails {wc} {ob} LIMIT ?"
         params = ep + qp + PARAMS + [max_rows]
@@ -1687,7 +1807,7 @@ with tab_search:
 
         where_parts = ["(" + " OR ".join(term_clauses) + ")"] + WHERE
         wc = "WHERE " + " AND ".join(where_parts)
-        sql = f'SELECT {col_list} FROM emails {wc} ORDER BY "deliverytime" DESC LIMIT ?'
+        sql = f"SELECT {col_list} FROM emails {wc} {DELIVERY_DESC_SQL} LIMIT ?"
         params = term_params + PARAMS + [max_rows]
         d = run_query(sql, params)
         cnt = count_emails(wc, tuple(term_params + PARAMS))
@@ -1749,7 +1869,11 @@ with tab_search:
             df, total_cnt, where_clause = _run_search(
                 q_clause, q_params,
                 select_extra=_tier, select_params=_sel_params,
-                order_by='ORDER BY ko_tier ASC, "deliverytime" DESC',
+                order_by=(
+                    'ORDER BY ko_tier ASC, '
+                    'try_cast("deliverytime" AS TIMESTAMP) DESC NULLS LAST, '
+                    'try_cast("no" AS BIGINT) DESC NULLS LAST'
+                ),
             )
         else:
             _bm25_order = bm25_query if (bm25_query and not ko_raw_query) else ""
@@ -1827,6 +1951,7 @@ with tab_search:
     else:
         df_show = df.copy()
         df_show = df_show.drop(columns=["ko_tier"], errors="ignore")  # internal sort key
+        df_show = _format_result_columns(df_show)
         if query_text and not df_show.empty:
             _nos = [str(n) for n in df_show["no"].tolist()]
             _ph = ", ".join(["?"] * len(_nos))
@@ -1897,13 +2022,13 @@ with tab_search:
             ],
             errors="ignore",
         )
-        df_table = _clean_id_columns(df_table)
+        df_table = _format_result_columns(df_table)
 
         st.dataframe(
             df_table,
-            use_container_width=True,
+            width="stretch",
             column_config={
-                "no":           st.column_config.TextColumn("no", width=70),
+                "no":           st.column_config.TextColumn(T["col_no"], width=70),
                 "month":        st.column_config.TextColumn("month", width=90),
                 "subject":      st.column_config.TextColumn(T["col_subject"],  width=280),
                 "senderemail":  st.column_config.TextColumn(T["col_sender"],   width=180),
@@ -1977,12 +2102,12 @@ with tab_search:
                         if c in _df_refined.columns
                     ]
                 )
-                _df_ref_table = _clean_id_columns(_df_ref_table)
+                _df_ref_table = _format_result_columns(_df_ref_table)
                 st.dataframe(
                     _df_ref_table,
-                    use_container_width=True,
+                    width="stretch",
                     column_config={
-                        "no":           st.column_config.TextColumn("no", width=70),
+                        "no":           st.column_config.TextColumn(T["col_no"], width=70),
                         "month":        st.column_config.TextColumn("month", width=90),
                         "subject":      st.column_config.TextColumn(T["col_subject"],  width=280),
                         "senderemail":  st.column_config.TextColumn(T["col_sender"],   width=180),
@@ -2029,29 +2154,31 @@ with tab_search:
             st.divider()
             _col_cl, _col_kd = st.columns(2)
             with _col_cl:
-                if st.button(T["btn_cluster"], key="p3_cluster", use_container_width=True):
+                if st.button(T["btn_cluster"], key="p3_cluster", width="stretch"):
                     _clustered = _cluster_emails(df_show)
                     _dist = _clustered["issue_type"].value_counts().reset_index()
                     _dist.columns = ["이슈", "건수"]
                     st.subheader(T["cluster_header"])
-                    st.dataframe(_dist, hide_index=True, use_container_width=True)
+                    st.dataframe(_dist, hide_index=True, width="stretch")
                     st.bar_chart(_dist.set_index("이슈")["건수"])
 
             # ── P3-2: Key Decision Finder ────────────────────────────
             with _col_kd:
-                if st.button(T["btn_key_decisions"], key="p3_key_decisions", use_container_width=True):
+                if st.button(T["btn_key_decisions"], key="p3_key_decisions", width="stretch"):
                     with st.spinner("조회 중..."):
                         _kd_df = _key_decisions_query()
                     st.subheader(T["key_decisions_header"])
                     if not _kd_df.empty:
+                        _kd_df = _format_result_columns(_kd_df)
                         st.dataframe(
                             _kd_df,
-                            use_container_width=True,
+                            width="stretch",
                             hide_index=True,
                             column_config={
+                                "no":           st.column_config.TextColumn(T["col_no"], width=70),
                                 "subject":      st.column_config.TextColumn(T["col_subject"],  width=260),
                                 "sendername":   st.column_config.TextColumn("Sender",          width=130),
-                                "deliverytime": st.column_config.TextColumn(T["col_received"], width=120),
+                                "deliverytime": st.column_config.TextColumn(T["col_received"], width=140),
                                 "hvdc_cases":   st.column_config.TextColumn(T["col_cases"],    width=140),
                             },
                         )
@@ -2072,21 +2199,23 @@ with tab_search:
                 if _nl_where:
                     _nl_sql = (
                         f"SELECT no, deliverytime, subject, sendername, company_name, hvdc_cases "
-                        f"FROM emails WHERE {_nl_where} ORDER BY deliverytime DESC LIMIT 50"
+                        f"FROM emails WHERE {_nl_where} {DELIVERY_DESC_SQL} LIMIT 50"
                     )
                     try:
                         _nl_result = run_query(_nl_sql, _nl_params if _nl_params else None)
                         st.subheader(T["nl_query_header"])
                         st.caption(f"WHERE `{_nl_where}`")
                         if not _nl_result.empty:
+                            _nl_result = _format_result_columns(_nl_result)
                             st.dataframe(
                                 _nl_result,
-                                use_container_width=True,
+                                width="stretch",
                                 hide_index=True,
-                                column_config={
-                                    "subject":      st.column_config.TextColumn(T["col_subject"],  width=280),
-                                    "sendername":   st.column_config.TextColumn("Sender",          width=140),
-                                    "deliverytime": st.column_config.TextColumn(T["col_received"], width=120),
+                            column_config={
+                                "no":           st.column_config.TextColumn(T["col_no"], width=70),
+                                "subject":      st.column_config.TextColumn(T["col_subject"],  width=280),
+                                "sendername":   st.column_config.TextColumn("Sender",          width=140),
+                                "deliverytime": st.column_config.TextColumn(T["col_received"], width=140),
                                 },
                             )
                         else:
@@ -2124,7 +2253,7 @@ with tab_search:
                 col_a, col_b = st.columns(2)
                 col_a.markdown(f"**{T['col_subject']}**  \n{r['subject']}")
                 col_a.markdown(f"**{T['col_sender']}**  \n{r['sendername']}  \n`{r['senderemail']}`")
-                col_b.markdown(f"**{T['col_received']}**  \n{r['deliverytime']}")
+                col_b.markdown(f"**{T['col_received']}**  \n{_format_datetime_value(r['deliverytime'])}")
                 col_b.markdown(f"**{T['col_recipients']}**  \n{r['recipientto']}")
 
                 _body_text = str(r["plaintextbody"] or "")
@@ -2197,13 +2326,15 @@ with tab_search:
                                     f"FROM emails WHERE NOT {_id_lookup_where('no')} AND embedding IS NOT NULL "
                                     "ORDER BY sim_score DESC LIMIT 5",
                                     [_evec] + _id_lookup_params(row_no_key),
-                                )
+                            )
                             if not _sim_df.empty:
+                                _sim_df = _format_result_columns(_sim_df)
                                 st.dataframe(
                                     _sim_df,
-                                    use_container_width=True,
+                                    width="stretch",
                                     hide_index=True,
                                     column_config={
+                                        "no":           st.column_config.TextColumn(T["col_no"], width=70),
                                         "subject":      st.column_config.TextColumn(T["col_subject"],  width=260),
                                         "sendername":   st.column_config.TextColumn(T["col_sender"],   width=140),
                                         "deliverytime": st.column_config.TextColumn(T["col_received"], width=140),
@@ -2217,7 +2348,7 @@ with tab_search:
                     with st.expander(f"{T['case_thread']}: {primary_case_val}"):
                         thread_df = run_query(
                             "SELECT no, deliverytime, subject, sendername FROM emails "
-                            "WHERE primary_case = ? ORDER BY deliverytime",
+                            f"WHERE primary_case = ? {DELIVERY_ASC_SQL}",
                             [str(primary_case_val)],
                         )
                         if not thread_df.empty:
@@ -2232,13 +2363,18 @@ with tab_search:
                             )
                             fig_thread.update_layout(**_CHART, height=300)
                             fig_thread.update_traces(marker=dict(size=10))
-                            st.plotly_chart(fig_thread, use_container_width=True)
+                            st.plotly_chart(fig_thread, width="stretch")
+                            thread_display_df = _format_result_columns(
+                                thread_df[["no", "deliverytime", "sendername", "subject"]]
+                            )
                             st.dataframe(
-                                thread_df[["no", "deliverytime", "sendername", "subject"]],
-                                use_container_width=True,
+                                thread_display_df,
+                                width="stretch",
                                 hide_index=True,
                                 height=200,
                                 column_config={
+                                    "no": st.column_config.TextColumn(T["col_no"], width=70),
+                                    "deliverytime": st.column_config.TextColumn(T["col_received"], width=140),
                                     "subject": st.column_config.TextColumn(T["col_subject"], width=300),
                                 },
                             )
@@ -2250,17 +2386,20 @@ with tab_search:
                         _sender_df = run_query(
                             "SELECT no, deliverytime, subject, hvdc_cases FROM emails "
                             f"WHERE senderemail = ? AND NOT {_id_lookup_where('no')} "
-                            "ORDER BY deliverytime DESC LIMIT 20",
+                            f"{DELIVERY_DESC_SQL} LIMIT 20",
                             [str(_sender_email_val)] + _id_lookup_params(row_no_key),
                         )
                         if not _sender_df.empty:
+                            _sender_df = _format_result_columns(_sender_df)
                             st.caption(f"**{len(_sender_df)}건**")
                             st.dataframe(
                                 _sender_df,
-                                use_container_width=True,
+                                width="stretch",
                                 hide_index=True,
                                 height=250,
                                 column_config={
+                                    "no": st.column_config.TextColumn(T["col_no"], width=70),
+                                    "deliverytime": st.column_config.TextColumn(T["col_received"], width=140),
                                     "subject": st.column_config.TextColumn(T["col_subject"], width=300),
                                     "hvdc_cases": st.column_config.TextColumn(T["col_cases"], width=150),
                                 },
@@ -2316,13 +2455,19 @@ with tab_analytics:
     @st.cache_data(ttl=3600)
     def load_site_stage_distribution():
         site_df = run_query("""
-            SELECT
-                COALESCE(NULLIF(TRIM(site), ''), 'Unclassified') AS site,
-                COUNT(*) AS email_count
+            SELECT site, sites, primary_site
             FROM emails
-            GROUP BY site
-            ORDER BY email_count DESC
         """)
+        if not site_df.empty:
+            site_values = site_df.apply(_display_first_site, axis=1)
+            site_df = (
+                site_values[site_values != ""]
+                .value_counts()
+                .rename_axis("site")
+                .reset_index(name="email_count")
+            )
+        else:
+            site_df = pd.DataFrame(columns=["site", "email_count"])
         stage_df = run_query("""
             SELECT
                 COALESCE(NULLIF(TRIM(stage), ''), 'Unclassified') AS stage,
@@ -2369,15 +2514,23 @@ with tab_analytics:
         df = run_query("""
             SELECT
                 month,
-                COALESCE(site, 'Unknown') AS site,
+                site,
+                sites,
+                primary_site,
                 COUNT(*) AS email_count
             FROM emails
             WHERE month IS NOT NULL AND TRIM(month) != '' AND month != 'None'
-            GROUP BY month, site
-            ORDER BY month, site
+            GROUP BY month, site, sites, primary_site
+            ORDER BY month, site, sites, primary_site
         """)
         if not df.empty:
             df["month"] = _clean_month(df["month"])
+            df["site"] = df.apply(_display_first_site, axis=1)
+            df = (
+                df[df["site"] != ""]
+                .groupby(["month", "site"], as_index=False)["email_count"]
+                .sum()
+            )
         return df
 
     @st.cache_data(ttl=3600)
@@ -2455,7 +2608,7 @@ with tab_analytics:
                 yaxis=dict(title=T["axis_email_count"], gridcolor="#E5E7EB"),
             )
             fig_vol.update_traces(hovertemplate=f"<b>%{{x}}</b><br>{T['axis_email_count']}: %{{y:,}}<extra></extra>")
-            st.plotly_chart(fig_vol, use_container_width=True)
+            st.plotly_chart(fig_vol, width="stretch")
 
             _, col_top = st.columns([3, 2])
             with col_top:
@@ -2477,10 +2630,10 @@ with tab_analytics:
                         height=400,
                     )
                     fig_top.update_traces(hovertemplate=f"<b>%{{y}}</b><br>{T['axis_email_count']}: %{{x:,}}<extra></extra>")
-                    st.plotly_chart(fig_top, use_container_width=True)
+                    st.plotly_chart(fig_top, width="stretch")
 
             with st.expander(T["raw_data"]):
-                st.dataframe(vol_df, use_container_width=True, hide_index=True)
+                st.dataframe(vol_df, width="stretch", hide_index=True)
 
     with sub_heat:
         st.subheader(T["heat_title"])
@@ -2505,7 +2658,7 @@ with tab_analytics:
                 xaxis=dict(type="category", tickangle=-45, tickfont=dict(size=12)),
             )
             fig_heat.update_traces(hovertemplate=f"<b>%{{y}}</b> · %{{x}}<br>{T['axis_email_count']}: %{{z:,}}<extra></extra>")
-            st.plotly_chart(fig_heat, use_container_width=True)
+            st.plotly_chart(fig_heat, width="stretch")
 
     with sub_dist:
         st.subheader(T["dist_title"])
@@ -2526,7 +2679,7 @@ with tab_analytics:
                     hovertemplate=f"<b>%{{label}}</b><br>{T['axis_email_count']}: %{{value:,}}<extra></extra>",
                 )
                 fig_site.update_layout(**_CHART, height=360, legend_title_text="Site")
-                st.plotly_chart(fig_site, use_container_width=True)
+                st.plotly_chart(fig_site, width="stretch")
 
         with col_stage:
             if stage_df.empty:
@@ -2543,11 +2696,11 @@ with tab_analytics:
                     hovertemplate=f"<b>%{{label}}</b><br>{T['axis_email_count']}: %{{value:,}}<extra></extra>",
                 )
                 fig_stage.update_layout(**_CHART, height=360, legend_title_text="Stage")
-                st.plotly_chart(fig_stage, use_container_width=True)
+                st.plotly_chart(fig_stage, width="stretch")
 
         st.dataframe(
             analytics_export_df,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             height=320,
             column_config={
@@ -2626,7 +2779,7 @@ with tab_analytics:
                     xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
                     yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
                 )
-                st.plotly_chart(fig_net, use_container_width=True)
+                st.plotly_chart(fig_net, width="stretch")
 
             except ImportError:
                 st.info(T["net_fallback"])
@@ -2639,11 +2792,11 @@ with tab_analytics:
                 )
                 fig_fallback.update_layout(**_CHART, height=600,
                     yaxis=dict(categoryorder="total ascending"))
-                st.plotly_chart(fig_fallback, use_container_width=True)
+                st.plotly_chart(fig_fallback, width="stretch")
 
             st.dataframe(
                 net_df.sort_values("weight", ascending=False).head(30),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "source": st.column_config.TextColumn(T["col_source"], width=200),
@@ -2740,7 +2893,9 @@ with tab_semantic:
                         ],
                         errors="ignore",
                     )
+                    result_display_df = _format_result_columns(result_display_df)
                     col_config = {
+                        "no":            st.column_config.TextColumn(T["col_no"], width=70),
                         "subject":       st.column_config.TextColumn(T["col_subject"],    width=200),
                         "sendername":    st.column_config.TextColumn(T["col_sender"],     width=150),
                         "deliverytime":  st.column_config.TextColumn(T["col_received"],   width=140),
@@ -2754,7 +2909,7 @@ with tab_semantic:
                         )
                     st.dataframe(
                         result_display_df,
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True,
                         height=500,
                         column_config=col_config,
