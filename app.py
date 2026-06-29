@@ -913,23 +913,29 @@ hr {
         width: 100% !important;
         min-width: 100% !important;
         max-width: 100% !important;
-        height: auto !important;
-        min-height: auto !important;
+        /* 화면의 45%만 차지 → 본문이 바로 아래에 보임 */
+        max-height: 45vh !important;
+        overflow-y: auto !important;
+        -webkit-overflow-scrolling: touch !important;
         z-index: 100 !important;
         border-right: none !important;
         border-bottom: 1px solid var(--hvdc-border) !important;
     }
-    /* 모바일에서 그리드 오버레이가 사이드바 위에 겹치지 않도록 숨김 */
+    /* 그리드 오버레이 숨김 */
     .stApp::after { display: none !important; }
     [data-testid="stSidebarUserContent"],
     [data-testid="stSidebarContent"] {
-        padding: 0.75rem 0.85rem !important;
+        padding: 0.6rem 0.75rem !important;
         min-height: auto !important;
     }
-    /* Hide collapse/hamburger button — sidebar is always open */
+    /* 햄버거 버튼 숨김 — 사이드바 항상 노출 */
     [data-testid="collapsedControl"],
     [data-testid="stSidebarCollapsedControl"] {
         display: none !important;
+    }
+    /* st.columns() 가로 배치 강제 — flex-direction:column 상속 방지 */
+    [data-testid="stHorizontalBlock"] {
+        flex-direction: row !important;
     }
 
     /* ─── Layout ─── */
