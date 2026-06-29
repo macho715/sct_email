@@ -95,6 +95,8 @@ _T = {
         "col_sender": "발신자",
         "col_received": "수신일시",
         "col_recipients": "수신자",
+        "col_sender_name": "발신자명",
+        "col_month": "수신월",
         "col_body": "본문",
         "col_cases": "HVDC Cases",
         "col_score": "관련도",
@@ -182,7 +184,8 @@ _T = {
         "btn_bulk_summary": "AI 일괄 요약 (상위 10건)",
         "bulk_summary_spinner": "Gemini 분석 중...",
         "bulk_summary_header": "검색 결과 AI 요약",
-        "query_rewrite": "검색어 확장 사용 (사전 + Gemini 옵션)",
+        "query_rewrite": "검색어 확장 사용 (사전 + Gemini, 느려짐)",
+        "query_rewrite_help": "켜면 사전과 Gemini API로 검색어를 넓혀 더 많은 메일을 찾습니다. Gemini 호출 때문에 검색이 느려집니다. 빠른 검색을 원하면 끄세요.",
         "query_rewrite_caption": "확장된 검색어:",
         "detected_entities": "감지된 항목",
         "col_entities": "항목",
@@ -196,7 +199,7 @@ _T = {
         "btn_key_decisions": "핵심 결정 이메일 TOP 10",
         "key_decisions_header": "핵심 의사결정 이메일",
         "nl_query_placeholder": "자연어로 이메일 검색",
-        "nl_query_caption": "문장으로 입력하면 조건 검색으로 바꿉니다 (예: 2025년 3월 Mammoet MRR)",
+        "nl_query_caption": "사이드바 키워드 검색과 달리, 문장을 그대로 입력하면 조건 검색으로 바꿉니다 (예: 2025년 3월 Mammoet MRR)",
         "nl_query_header": "자연어 검색 결과",
     },
     "en": {
@@ -249,6 +252,8 @@ _T = {
         "col_sender": "Sender",
         "col_received": "Received",
         "col_recipients": "Recipients",
+        "col_sender_name": "Sender name",
+        "col_month": "Month",
         "col_body": "Body",
         "col_cases": "HVDC Cases",
         "col_score": "Relevance",
@@ -336,7 +341,8 @@ _T = {
         "btn_bulk_summary": "AI Summary (Top 10)",
         "bulk_summary_spinner": "Gemini summarizing...",
         "bulk_summary_header": "Search Results AI Summary",
-        "query_rewrite": "Expand search terms (glossary + optional Gemini)",
+        "query_rewrite": "Expand search terms (glossary + Gemini, slower)",
+        "query_rewrite_help": "When on, the glossary and Gemini API broaden your query to catch more emails. The Gemini call makes each search slower. Turn off for faster searches.",
         "query_rewrite_caption": "Expanded search terms:",
         "detected_entities": "Detected",
         "col_entities": "Entities",
@@ -350,7 +356,7 @@ _T = {
         "btn_key_decisions": "Key Decision Emails TOP 10",
         "key_decisions_header": "Key Decision Emails",
         "nl_query_placeholder": "Natural language email search",
-        "nl_query_caption": "Type a sentence and it will be converted into filtered search (e.g. MRR from Mammoet in March 2025)",
+        "nl_query_caption": "Unlike the sidebar keyword search, type a full sentence here and it is converted into a filtered search (e.g. MRR from Mammoet in March 2025)",
         "nl_query_header": "Natural Language Query Results",
     },
 }
@@ -371,11 +377,13 @@ if "search_history" not in st.session_state:
 
 # ── 비밀번호 보호 ─────────────────────────────────────────────────────
 _PASSWORD = st.secrets.get("password", "")
-if _PASSWORD:
+if _PASSWORD and not st.session_state.get("_authed", False):
     _input_pwd = st.text_input("비밀번호를 입력하세요", type="password")
-    if _input_pwd != _PASSWORD:
-        st.warning("올바른 비밀번호를 입력해야 대시보드를 사용할 수 있습니다.")
-        st.stop()
+    if _input_pwd == _PASSWORD:
+        st.session_state["_authed"] = True
+        st.rerun()
+    st.warning("올바른 비밀번호를 입력해야 대시보드를 사용할 수 있습니다.")
+    st.stop()
 
 st.markdown("""
 <style>
@@ -407,11 +415,11 @@ st.markdown("""
 
 /* ─── SIDEBAR ─── */
 [data-testid="stSidebar"] { background: #F0F4F8 !important; border-right: 1px solid #E2E8F0; }
-[data-testid="stSidebar"] * { color: #1E293B !important; }
+[data-testid="stSidebar"] * { color: var(--hvdc-soft) !important; }
 [data-testid="stSidebar"] .stSelectbox label,
 [data-testid="stSidebar"] .stMultiSelect label,
 [data-testid="stSidebar"] .stTextInput label,
-[data-testid="stSidebar"] .stSlider label { color: #374151 !important; }
+[data-testid="stSidebar"] .stSlider label { color: var(--hvdc-muted) !important; }
 .sidebar-section {
     background: #FFFFFF; border: 1px solid #E2E8F0;
     border-radius: 10px; padding: 12px 14px; margin-bottom: 10px;
@@ -590,11 +598,11 @@ p, li, label, span, div {
 .hvdc-header {
     position: relative;
     overflow: hidden;
-    min-height: 184px;
-    align-items: flex-end;
-    gap: 22px;
-    padding: 28px 32px;
-    margin: 0 0 1.4rem;
+    min-height: auto;
+    align-items: center;
+    gap: 18px;
+    padding: 16px 24px;
+    margin: 0 0 1rem;
     border-radius: 8px;
     border: 1px solid var(--hvdc-border);
     background:
@@ -620,16 +628,16 @@ p, li, label, span, div {
     position: relative;
     display: grid;
     place-items: center;
-    width: 64px;
-    height: 64px;
-    flex: 0 0 64px;
+    width: 44px;
+    height: 44px;
+    flex: 0 0 44px;
     border-radius: 8px;
     border: 1px solid var(--hvdc-border-strong);
     background: rgba(242,183,5,0.10);
     color: var(--hvdc-accent);
     font-family: 'Geist', 'Pretendard', sans-serif;
     font-weight: 800;
-    font-size: 1rem;
+    font-size: 0.82rem;
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.14);
 }
 
@@ -650,18 +658,18 @@ p, li, label, span, div {
 
 .hvdc-header-title {
     color: var(--hvdc-text);
-    font-size: clamp(2.1rem, 4.4vw, 4.35rem);
-    line-height: 1.08;
+    font-size: clamp(1.4rem, 2.4vw, 1.95rem);
+    line-height: 1.15;
     font-weight: 800;
     letter-spacing: 0 !important;
 }
 
 .hvdc-header-caption {
-    max-width: 64ch;
-    margin-top: 10px;
+    max-width: 72ch;
+    margin-top: 5px;
     color: var(--hvdc-muted);
-    font-size: 0.98rem;
-    line-height: 1.7;
+    font-size: 0.84rem;
+    line-height: 1.5;
 }
 
 .hvdc-header-status {
@@ -1492,6 +1500,41 @@ def _mask_entity_value(tag: str, value: str) -> str:
     return str(value).strip()
 
 
+def _mask_email(value) -> str:
+    """Mask local-part of each email (keep first char + domain), preserve names.
+
+    Handles semicolon/comma-separated recipient strings and leaves any
+    non-email token (display names) untouched.
+    """
+    import re
+    text = str(value or "").strip()
+    if not text:
+        return text
+
+    def _mask_one(token: str) -> str:
+        stripped = token.strip()
+        m = re.fullmatch(r"([^@\s]+)@([^@\s]+)", stripped)
+        if not m:
+            return token
+        local, domain = m.group(1), m.group(2)
+        head = local[0] if local else ""
+        lead = token[: len(token) - len(token.lstrip())]
+        trail = token[len(token.rstrip()):]
+        return f"{lead}{head}****@{domain}{trail}"
+
+    parts = re.split(r"([;,])", text)
+    return "".join(p if p in (";", ",") else _mask_one(p) for p in parts)
+
+
+def _format_month_value(value) -> str:
+    """Render a YYYYMM month code (e.g. 202509) as YYYY-MM. Pass through else."""
+    import re
+    s = str(value or "").strip().replace(".0", "")
+    if re.fullmatch(r"\d{6}", s):
+        return f"{s[:4]}-{s[4:]}"
+    return s
+
+
 def _extract_snippet(body: str, query: str, context_chars: int = 150) -> str:
     if not body or not query:
         return ""
@@ -2250,7 +2293,7 @@ with st.sidebar:
         case_filter   = st.text_input(T["case_filter_label"],   placeholder=T["case_filter_ph"])
 
     max_rows = st.slider(T["max_rows"], 50, 2000, 200, 50)
-    use_query_rewrite = st.checkbox(T["query_rewrite"], value=True)
+    use_query_rewrite = st.checkbox(T["query_rewrite"], value=True, help=T["query_rewrite_help"])
 
     st.divider()
 
@@ -2583,10 +2626,18 @@ with tab_search:
     if not df.empty and query_text:
         df = _search_copilot_rerank(df, bm25_query or query_text, query_entities)
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric(T["metric_match"], f"{total_cnt:,}", help=T["metric_match_help"])
-    c2.metric(T["metric_shown"], f"{len(df):,}",   help=f"{T['metric_shown_help']} {max_rows:,}")
-    c3.metric(T["metric_total"], f"{get_total_emails():,}", help=T["metric_total_help"])
+    st.markdown(
+        "<div style=\"font-size:0.86rem;color:var(--hvdc-muted);"
+        "padding:2px 0 4px;letter-spacing:0.01em;\">"
+        f"{T['metric_match']} <b style=\"color:var(--hvdc-text);\">{total_cnt:,}</b>"
+        f"<span style=\"color:var(--hvdc-border-strong);margin:0 10px;\">·</span>"
+        f"{T['metric_shown']} <b style=\"color:var(--hvdc-text);\">{len(df):,}</b>"
+        f"<span style=\"color:var(--hvdc-muted);\"> / {max_rows:,}</span>"
+        f"<span style=\"color:var(--hvdc-border-strong);margin:0 10px;\">·</span>"
+        f"{T['metric_total']} <b style=\"color:var(--hvdc-accent);\">{get_total_emails():,}</b>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
     st.divider()
     if search_mode == "glossary":
@@ -2689,14 +2740,26 @@ with tab_search:
         )
         df_table = _format_result_columns(df_table)
 
+        # Display-only: mask email local-parts (keep names), format month.
+        # Operate on a copy so df_show (refine filter) keeps matching raw values.
+        df_table = df_table.copy()
+        for _email_col in ["senderemail", "recipientto"]:
+            if _email_col in df_table.columns:
+                df_table[_email_col] = df_table[_email_col].apply(_mask_email)
+        if "month" in df_table.columns:
+            df_table["month"] = df_table["month"].apply(_format_month_value)
+
         st.dataframe(
             df_table,
             width="stretch",
             column_config={
                 "no":           st.column_config.TextColumn(T["col_no"], width=70),
-                "month":        st.column_config.TextColumn("month", width=90),
+                "month":        st.column_config.TextColumn(T["col_month"], width=90),
                 "subject":      st.column_config.TextColumn(T["col_subject"],  width=280),
+                "sendername":   st.column_config.TextColumn(T["col_sender_name"], width=150),
                 "senderemail":  st.column_config.TextColumn(T["col_sender"],   width=180),
+                "company_name": st.column_config.TextColumn(T["col_company"],  width=140),
+                "recipientto":  st.column_config.TextColumn(T["col_recipients"], width=180),
                 "deliverytime": st.column_config.TextColumn(T["col_received"], width=140),
                 "hvdc_cases":   st.column_config.TextColumn(T["col_cases"],    width=170),
                 "bm25_score":   st.column_config.NumberColumn(T["col_score"],  format="%.3f"),
@@ -3500,7 +3563,6 @@ with tab_semantic:
         f'<div class="hvdc-panel-title"><strong>{_sem_panel_title}</strong><span>{_sem_panel_desc}</span></div>',
         unsafe_allow_html=True,
     )
-    st.subheader(T["sem_title"])
 
     _has_emb       = has_embeddings()
     _has_chunk_emb = has_chunk_embeddings()
