@@ -2,6 +2,7 @@
 HVDC Email Search — Streamlit + DuckDB  v2.0
 Features: BM25 Search | Gemini AI Summary | Case Thread | Network Graph | Semantic Search
 """
+import os
 import warnings
 import requests
 import duckdb
@@ -121,10 +122,10 @@ _T = {
         "metric_vol": "분석 이메일",
         "metric_peak": "피크 월",
         "analytics_csv": "Analytics CSV 다운로드",
-        "subtab_vol": "📈 월별 추이",
-        "subtab_heat": "🗺️ Site × 월 히트맵",
-        "subtab_dist": "📊 Site / Stage 분포",
-        "subtab_net": "🕸️ 네트워크",
+        "subtab_vol": "월별 추이",
+        "subtab_heat": "Site × 월 히트맵",
+        "subtab_dist": "Site / Stage 분포",
+        "subtab_net": "네트워크",
         "vol_title": "월별 이메일 수신량",
         "vol_no_data": "월별 데이터가 없습니다.",
         "top_senders": "Top 20 발신 그룹",
@@ -275,10 +276,10 @@ _T = {
         "metric_vol": "Total Emails",
         "metric_peak": "Peak Month",
         "analytics_csv": "Download Analytics CSV",
-        "subtab_vol": "📈 Monthly Trend",
-        "subtab_heat": "🗺️ Site × Month Heatmap",
-        "subtab_dist": "📊 Site / Stage Distribution",
-        "subtab_net": "🕸️ Network",
+        "subtab_vol": "Monthly Trend",
+        "subtab_heat": "Site × Month Heatmap",
+        "subtab_dist": "Site / Stage Distribution",
+        "subtab_net": "Network",
         "vol_title": "Monthly Email Volume",
         "vol_no_data": "No monthly data available.",
         "top_senders": "Top 20 Sender Groups",
@@ -364,7 +365,7 @@ st.set_page_config(
     page_title="HVDC Email Search",
     page_icon=":material/search:",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ── 언어 상태 초기화 ──────────────────────────────────────────────────
@@ -373,12 +374,225 @@ if "lang" not in st.session_state:
 if "search_history" not in st.session_state:
     st.session_state.search_history = []
 
+
+def _inject_pre_auth_theme() -> None:
+    """Style the first public screen before Streamlit secrets gate the app."""
+    st.markdown(
+        """
+<style>
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.min.css');
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@500;600;700;800&display=swap');
+
+:root {
+    --hvdc-bg: #0B0C0E;
+    --hvdc-panel: rgba(24, 24, 27, 0.78);
+    --hvdc-panel-strong: rgba(39, 39, 42, 0.92);
+    --hvdc-border: rgba(250, 250, 249, 0.10);
+    --hvdc-text: #FAFAF9;
+    --hvdc-muted: #A8A29E;
+    --hvdc-soft: #E7E5E4;
+    --hvdc-accent: #F2B705;
+}
+
+html, body, [class*="css"] {
+    font-family: 'Pretendard', 'Geist', system-ui, -apple-system, BlinkMacSystemFont, sans-serif !important;
+    word-break: keep-all;
+}
+
+.stApp {
+    background:
+        radial-gradient(circle at 82% 8%, rgba(242, 183, 5, 0.18), transparent 30rem),
+        radial-gradient(circle at 6% 24%, rgba(120, 113, 108, 0.20), transparent 27rem),
+        linear-gradient(145deg, #0B0C0E 0%, #141414 48%, #1C1917 100%) !important;
+    color: var(--hvdc-text);
+}
+
+[data-testid="stHeader"] { background: transparent !important; }
+[data-testid="block-container"] {
+    max-width: 1480px;
+    padding: clamp(1.2rem, 4vw, 4rem) clamp(1rem, 5vw, 5rem) 2rem !important;
+}
+
+.hvdc-login-shell {
+    min-height: min(74dvh, 760px);
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+    gap: clamp(1.5rem, 5vw, 5rem);
+    align-items: center;
+}
+
+.hvdc-login-kicker {
+    color: var(--hvdc-accent);
+    font-size: 0.74rem;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    margin-bottom: 1rem;
+}
+
+.hvdc-login-title {
+    color: var(--hvdc-text);
+    font-size: clamp(2.5rem, 7vw, 6.4rem);
+    font-weight: 800;
+    letter-spacing: 0;
+    line-height: 1.03;
+    max-width: 10ch;
+}
+
+.hvdc-login-copy {
+    color: var(--hvdc-muted);
+    font-size: clamp(1rem, 1.4vw, 1.2rem);
+    line-height: 1.75;
+    max-width: 58ch;
+    margin-top: 1.2rem;
+}
+
+.hvdc-login-proof {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-top: 2rem;
+    max-width: 720px;
+}
+
+.hvdc-login-stat {
+    min-height: 96px;
+    padding: 1rem;
+    border: 1px solid var(--hvdc-border);
+    border-radius: 8px;
+    background: rgba(250, 250, 249, 0.05);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.hvdc-login-stat strong {
+    display: block;
+    color: var(--hvdc-accent);
+    font-family: 'Geist', 'Pretendard', sans-serif;
+    font-size: clamp(1.35rem, 2.5vw, 2rem);
+    line-height: 1;
+}
+
+.hvdc-login-stat span {
+    display: block;
+    color: var(--hvdc-soft);
+    font-size: 0.78rem;
+    line-height: 1.45;
+    margin-top: 0.55rem;
+}
+
+.hvdc-login-panel {
+    border: 1px solid var(--hvdc-border);
+    border-radius: 8px;
+    background: linear-gradient(180deg, rgba(39, 39, 42, 0.92), rgba(24, 24, 27, 0.72));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 24px 80px rgba(0, 0, 0, 0.30);
+    padding: clamp(1.2rem, 3vw, 2rem);
+}
+
+.hvdc-login-panel-title {
+    color: var(--hvdc-text);
+    font-size: 1.05rem;
+    font-weight: 800;
+    margin-bottom: 0.45rem;
+}
+
+.hvdc-login-panel-copy {
+    color: var(--hvdc-muted);
+    font-size: 0.88rem;
+    line-height: 1.65;
+}
+
+[data-testid="stTextInput"] label {
+    color: var(--hvdc-soft) !important;
+    font-weight: 800 !important;
+}
+
+[data-testid="stTextInput"] input {
+    min-height: 52px;
+    color: var(--hvdc-text) !important;
+    background: rgba(24, 24, 27, 0.92) !important;
+    border: 1px solid rgba(250, 250, 249, 0.14) !important;
+    border-radius: 8px !important;
+    font-size: 16px !important;
+}
+
+[data-testid="stTextInput"] input:focus {
+    border-color: var(--hvdc-accent) !important;
+    box-shadow: 0 0 0 3px rgba(242, 183, 5, 0.18) !important;
+}
+
+.hvdc-login-note {
+    color: var(--hvdc-soft);
+    background: rgba(242, 183, 5, 0.10);
+    border: 1px solid rgba(242, 183, 5, 0.28);
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+    margin-top: 1rem;
+    font-size: 0.92rem;
+}
+
+@media (max-width: 900px) {
+    [data-testid="block-container"] { padding: 0.85rem 1rem 1.4rem !important; }
+    .hvdc-login-shell { grid-template-columns: 1fr; min-height: auto; gap: 0.8rem; }
+    .hvdc-login-kicker { font-size: 0.66rem; margin-bottom: 0.65rem; }
+    .hvdc-login-title { font-size: clamp(2.3rem, 12vw, 3.35rem); max-width: 11ch; line-height: 1.02; }
+    .hvdc-login-copy { font-size: 0.93rem; line-height: 1.58; margin-top: 0.85rem; }
+    .hvdc-login-proof { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.45rem; margin-top: 1rem; }
+    .hvdc-login-stat { min-height: 78px; padding: 0.7rem; }
+    .hvdc-login-stat strong { font-size: 1.35rem; }
+    .hvdc-login-stat span { font-size: 0.62rem; line-height: 1.25; margin-top: 0.35rem; }
+    .hvdc-login-panel { padding: 0.95rem; }
+    .hvdc-login-panel-title { font-size: 0.98rem; }
+    .hvdc-login-panel-copy { font-size: 0.8rem; line-height: 1.45; }
+    [data-testid="stTextInput"] input { min-height: 48px; }
+    .hvdc-login-note { padding: 0.75rem 0.85rem; font-size: 0.84rem; }
+}
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+_inject_pre_auth_theme()
+
 # ── 비밀번호 보호 ─────────────────────────────────────────────────────
-_PASSWORD = st.secrets.get("password", "")
+_PASSWORD = st.secrets.get("password", "") or os.environ.get("HVDC_MAIL_PASSWORD", "")
 if _PASSWORD:
-    _input_pwd = st.text_input("비밀번호를 입력하세요", type="password")
+    st.markdown(
+        """
+<section class="hvdc-login-shell">
+    <div>
+        <div class="hvdc-login-kicker">Project Mail Operations</div>
+        <div class="hvdc-login-title">HVDC Email Search</div>
+        <div class="hvdc-login-copy">
+            Samsung C&amp;T와 ADNOC 프로젝트 메일을 빠르게 찾고, 첨부 PDF와 케이스 흐름까지 한 화면에서 확인합니다.
+            접근 권한이 있는 사용자만 대시보드를 열 수 있습니다.
+        </div>
+        <div class="hvdc-login-proof">
+            <div class="hvdc-login-stat"><strong>51,964</strong><span>검색 가능한 프로젝트 메일</span></div>
+            <div class="hvdc-login-stat"><strong>3</strong><span>검색, 분석, 의미 검색 워크스페이스</span></div>
+            <div class="hvdc-login-stat"><strong>PDF</strong><span>첨부 문서 바로 열기와 다운로드</span></div>
+        </div>
+    </div>
+    <div class="hvdc-login-panel">
+        <div class="hvdc-login-panel-title">보안 확인</div>
+        <div class="hvdc-login-panel-copy">관리자에게 받은 비밀번호를 입력하면 운영 대시보드가 열립니다.</div>
+    </div>
+</section>
+        """,
+        unsafe_allow_html=True,
+    )
+    _input_pwd = st.text_input(
+        "접근 비밀번호",
+        type="password",
+        placeholder="비밀번호 입력",
+    )
     if _input_pwd != _PASSWORD:
-        st.warning("올바른 비밀번호를 입력해야 대시보드를 사용할 수 있습니다.")
+        _login_note = (
+            "비밀번호를 입력한 뒤 Enter를 누르세요."
+            if not _input_pwd
+            else "비밀번호가 맞지 않습니다. 다시 입력해 주세요."
+        )
+        st.markdown(f'<div class="hvdc-login-note">{_login_note}</div>', unsafe_allow_html=True)
         st.stop()
 
 st.markdown("""
