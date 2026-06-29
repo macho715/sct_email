@@ -169,6 +169,7 @@ _T = {
         "query_rewrite_caption": "확장된 검색어:",
         "detected_entities": "감지된 항목",
         "col_entities": "항목",
+        "col_match_reason": "검색 이유",
         "refine_placeholder": "결과 좁히기 (예: 2025년만, DSV만)",
         "btn_similar": "유사 이메일 5건",
         "btn_timeline": "Case 타임라인",
@@ -315,6 +316,7 @@ _T = {
         "query_rewrite_caption": "Expanded query:",
         "detected_entities": "Detected",
         "col_entities": "Entities",
+        "col_match_reason": "Why matched",
         "refine_placeholder": "Refine results (e.g. 2025 only, DSV only)",
         "btn_similar": "Similar Emails (5)",
         "btn_timeline": "Case Timeline",
@@ -604,6 +606,17 @@ def count_emails(where_clause: str = "", params: tuple = ()) -> int:
     return int(df.iloc[0, 0]) if not df.empty else 0
 
 
+@st.cache_data(ttl=3600)
+def email_columns() -> tuple[str, ...]:
+    df = run_query(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name='emails'"
+    )
+    if df.empty or "column_name" not in df.columns:
+        return tuple()
+    return tuple(str(v) for v in df["column_name"].tolist())
+
+
 def get_total_emails() -> int:
     return count_emails()
 
@@ -800,6 +813,107 @@ def _normalize_score(series: pd.Series) -> pd.Series:
     return (vals - lo) / (hi - lo)
 
 
+def _rrf_score(series: pd.Series, *, ascending: bool = False, k: int = 60) -> pd.Series:
+    vals = pd.to_numeric(series, errors="coerce")
+    valid = vals.notna()
+    scores = pd.Series(0.0, index=vals.index)
+    if not valid.any():
+        return scores
+    ranks = vals[valid].rank(method="min", ascending=ascending)
+    scores.loc[valid] = 1.0 / (k + ranks)
+    return scores
+
+
+def _identifier_terms(query: str) -> list[str]:
+    import re
+    text = str(query or "").strip()
+    candidates: list[str] = []
+    patterns = [
+        r"\b\d{4,}\b",
+        r"\b[A-Z0-9]{2,}(?:[-_/][A-Z0-9]+)+\b",
+        r"\b[A-Z]{1,10}\d[A-Z0-9/-]{3,}\b",
+        r"\b(?:HVDC|CASE|PO|BL|BOE|MRR|FANR|INV)[-:/\s]?[A-Z0-9][A-Z0-9\-/]{4,}\b",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            val = re.sub(r"\s+", " ", match.group(0)).strip(" ,.;:()[]{}")
+            if val:
+                candidates.append(val)
+    for term in _query_terms(text):
+        if any(ch.isdigit() for ch in term) or "-" in term or "/" in term:
+            candidates.append(term)
+    return list(dict.fromkeys(candidates))[:8]
+
+
+def _is_identifier_query(query: str) -> bool:
+    return bool(_identifier_terms(query))
+
+
+def _field_hit_reason(row: pd.Series, query: str) -> str:
+    terms = _identifier_terms(query) or _query_terms(query)
+    if not terms:
+        return ""
+    fields = [
+        ("no", "no"),
+        ("hvdc_cases", "case"),
+        ("primary_case", "case"),
+        ("case_numbers", "case"),
+        ("lpo_numbers", "lpo"),
+        ("subject", "subject"),
+        ("senderemail", "sender"),
+        ("company_name", "company"),
+        ("linkkey", "pdf"),
+        ("rowkey", "rowkey"),
+    ]
+    reasons = []
+    for term in terms[:6]:
+        t = str(term).lower()
+        for col, label in fields:
+            if t and t in str(row.get(col, "") or "").lower():
+                reasons.append(f"{label}:{term}")
+                break
+    return ", ".join(list(dict.fromkeys(reasons))[:4])
+
+
+def _field_match_score(row: pd.Series, query: str) -> float:
+    terms = [str(t).lower() for t in (_identifier_terms(query) or _query_terms(query))[:6]]
+    if not terms:
+        return 0.0
+    weighted_fields = [
+        ("hvdc_cases", 0.35),
+        ("primary_case", 0.35),
+        ("case_numbers", 0.35),
+        ("lpo_numbers", 0.30),
+        ("subject", 0.25),
+        ("senderemail", 0.15),
+        ("company_name", 0.15),
+        ("linkkey", 0.10),
+        ("rowkey", 0.25),
+    ]
+    score = 0.0
+    for col, weight in weighted_fields:
+        text = str(row.get(col, "") or "").lower()
+        if text and any(term in text for term in terms):
+            score += weight
+    return min(1.0, score)
+
+
+def _exact_match_tier(row: pd.Series, terms: list[str]) -> int:
+    clean_terms = {_clean_id_value(t).lower() for t in terms if _clean_id_value(t)}
+    no_value = _clean_id_value(row.get("no", "")).lower()
+    if no_value and no_value in clean_terms:
+        return 0
+    strong_fields = [
+        "hvdc_cases", "primary_case", "case_numbers", "lpo_numbers",
+        "subject", "linkkey", "rowkey", "senderemail", "company_name",
+    ]
+    for col in strong_fields:
+        text = str(row.get(col, "") or "").lower()
+        if text and any(term.lower() in text for term in terms):
+            return 1
+    return 2
+
+
 def _entity_match_score(row: pd.Series, query_entities: dict, query: str) -> float:
     haystack = " ".join(
         str(row.get(col, "") or "")
@@ -845,22 +959,31 @@ def _search_copilot_rerank(df: pd.DataFrame, query: str, query_entities: dict | 
     else:
         out["recency_score"] = 0.0
     out["decision_signal"] = out.apply(_decision_signal_score, axis=1)
-
-    if "cosine_score" in out.columns:
-        out["search_copilot_score"] = (
-            0.45 * out["bm25_norm"]
-            + 0.30 * out["vector_norm"]
-            + 0.15 * out["entity_match"]
-            + 0.05 * out["recency_score"]
-            + 0.05 * out["decision_signal"]
-        )
+    if "exact_score" in out.columns:
+        out["exact_score"] = pd.to_numeric(out["exact_score"], errors="coerce").fillna(0.0)
     else:
-        out["search_copilot_score"] = (
-            0.65 * out["bm25_norm"]
-            + 0.20 * out["entity_match"]
-            + 0.10 * out["recency_score"]
-            + 0.05 * out["decision_signal"]
-        )
+        out["exact_score"] = pd.Series(0.0, index=out.index)
+    out["field_match"] = out.apply(lambda row: _field_match_score(row, query), axis=1)
+    bm25_rrf = _rrf_score(out["bm25_score"]) if "bm25_score" in out.columns else 0.0
+    vector_rrf = _rrf_score(out["cosine_score"]) if "cosine_score" in out.columns else 0.0
+    exact_rrf = _rrf_score(out["exact_rank"], ascending=True) if "exact_rank" in out.columns else 0.0
+    out["search_copilot_score"] = (
+        10.0 * bm25_rrf
+        + 8.0 * vector_rrf
+        + 8.0 * exact_rrf
+        + 0.50 * out["exact_score"].clip(0.0, 1.0)
+        + 0.12 * out["field_match"]
+        + 0.12 * out["entity_match"]
+        + 0.05 * out["recency_score"]
+        + 0.05 * out["decision_signal"]
+    )
+    if "match_reason" not in out.columns:
+        out["match_reason"] = ""
+    field_reason = out.apply(lambda row: _field_hit_reason(row, query), axis=1)
+    out["match_reason"] = [
+        ", ".join(list(dict.fromkeys([part for part in [base, extra] if part]))[:4])
+        for base, extra in zip(out["match_reason"].fillna(""), field_reason)
+    ]
     return out.sort_values("search_copilot_score", ascending=False)
 
 
@@ -1365,11 +1488,14 @@ tab_search, tab_analytics, tab_semantic = st.tabs([
 # ════════════════════════════════════════════════════════════════
 with tab_search:
 
-    COLS_SHOW = [
+    BASE_COLS_SHOW = [
         "no", "month", "subject", "sendername", "senderemail",
         "company_name", "recipientto", "deliverytime",
         "site", "stage", "hvdc_cases", "primary_case", "linkkey",
     ]
+    SEARCH_HELPER_COLS = ["case_numbers", "lpo_numbers", "rowkey"]
+    _available_cols = set(email_columns())
+    COLS_SHOW = BASE_COLS_SHOW + [c for c in SEARCH_HELPER_COLS if c in _available_cols]
 
     WHERE: list[str] = []
     PARAMS: list = []
@@ -1466,6 +1592,85 @@ with tab_search:
         d = run_query(sql, params if params else None)
         return d, cnt, wc
 
+    def _run_exact_search(query: str):
+        terms = _identifier_terms(query)
+        if not terms:
+            return pd.DataFrame(), 0, ""
+
+        preferred_text_cols = [
+            "hvdc_cases", "primary_case", "case_numbers", "lpo_numbers",
+            "subject", "senderemail", "company_name", "linkkey", "rowkey",
+            "plaintextbody",
+        ]
+        text_cols = [col for col in preferred_text_cols if col in _available_cols]
+        term_clauses = []
+        term_params: list = []
+        for term in terms:
+            clean = _clean_id_value(term)
+            field_parts = [_id_lookup_where('"no"')]
+            term_params.extend(_id_lookup_params(clean))
+            is_short_numeric = clean.isdigit() and len(clean) <= 5
+            is_date_like = clean.isdigit() and (
+                len(clean) == 4 and clean.startswith("20")
+                or len(clean) == 6 and clean.startswith("20")
+            )
+            allowed_cols = [] if is_short_numeric or is_date_like else text_cols
+            for col in allowed_cols:
+                field_parts.append(f'CAST("{col}" AS VARCHAR) ILIKE ?')
+                term_params.append(f"%{term}%")
+            term_clauses.append("(" + " OR ".join(field_parts) + ")")
+
+        where_parts = ["(" + " OR ".join(term_clauses) + ")"] + WHERE
+        wc = "WHERE " + " AND ".join(where_parts)
+        sql = f'SELECT {col_list} FROM emails {wc} ORDER BY "deliverytime" DESC LIMIT ?'
+        params = term_params + PARAMS + [max_rows]
+        d = run_query(sql, params)
+        cnt = count_emails(wc, tuple(term_params + PARAMS))
+        if d.empty:
+            return d, cnt, wc
+
+        d = d.copy()
+        d["exact_tier"] = d.apply(lambda row: _exact_match_tier(row, terms), axis=1)
+        d["_exact_delivery"] = pd.to_datetime(d.get("deliverytime"), errors="coerce")
+        d = d.sort_values(
+            ["exact_tier", "_exact_delivery"],
+            ascending=[True, False],
+            na_position="last",
+        ).drop(columns=["_exact_delivery"], errors="ignore")
+        d["exact_rank"] = range(1, len(d) + 1)
+        d["exact_score"] = 1.0
+        d["match_reason"] = d.apply(
+            lambda row: "exact identifier"
+            + (f", {_field_hit_reason(row, query)}" if _field_hit_reason(row, query) else ", body"),
+            axis=1,
+        )
+        return d, cnt, wc
+
+    def _merge_search_results(primary: pd.DataFrame, exact: pd.DataFrame) -> pd.DataFrame:
+        if exact.empty:
+            return primary
+        if primary.empty:
+            return exact.drop(columns=["_dedupe_no"], errors="ignore")
+
+        primary = primary.copy()
+        exact = exact.copy()
+        primary["_dedupe_no"] = primary["no"].apply(_clean_id_value)
+        exact["_dedupe_no"] = exact["no"].apply(_clean_id_value)
+        exact_by_no = exact.drop_duplicates("_dedupe_no", keep="first").set_index("_dedupe_no")
+
+        for col in ["exact_rank", "exact_score", "exact_tier", "match_reason"]:
+            if col not in exact_by_no.columns:
+                continue
+            mapped = primary["_dedupe_no"].map(exact_by_no[col])
+            if col in primary.columns:
+                primary[col] = mapped.combine_first(primary[col])
+            else:
+                primary[col] = mapped
+
+        exact_only = exact[~exact["_dedupe_no"].isin(set(primary["_dedupe_no"]))]
+        merged = pd.concat([primary, exact_only], ignore_index=True, sort=False)
+        return merged.drop(columns=["_dedupe_no"], errors="ignore")
+
     # Stage 1 — primary search
     with st.spinner(T["searching"]):
         if search_mode == "glossary":
@@ -1485,6 +1690,17 @@ with tab_search:
             _bm25_order = bm25_query if (bm25_query and not ko_raw_query) else ""
             df, total_cnt, where_clause = _run_search(
                 q_clause, q_params, bm25_order_term=_bm25_order)
+
+    exact_df = pd.DataFrame()
+    exact_cnt = 0
+    if query_text and _is_identifier_query(query_text):
+        exact_df, exact_cnt, exact_where_clause = _run_exact_search(query_text)
+        if not exact_df.empty:
+            df = _merge_search_results(df, exact_df)
+            total_cnt = max(total_cnt, exact_cnt)
+            if not q_clause:
+                where_clause = exact_where_clause
+                search_mode = "exact"
 
     # Phase C — zero-result fallback chain (pure SQL, no API). Escalate only on empty.
     if df.empty and query_text:
@@ -1529,6 +1745,10 @@ with tab_search:
         st.caption(f"🧩 토큰 분리 검색(폴백): `{bm25_query}`")
     elif search_mode == "ilike_fb":
         st.caption(f"⚠ 부분 일치(폴백): `{query_text}` substring")
+    elif search_mode == "exact":
+        st.caption(f"🎯 정확 식별자 검색: `{query_text}`")
+    if query_text and not exact_df.empty:
+        st.caption(f"🎯 정확 식별자 보강: {len(exact_df):,}건을 상위 랭킹에 반영")
     if query_entities:
         st.caption(f"{T['detected_entities']}: {_entity_chip_text(query_entities)}")
 
@@ -1605,7 +1825,11 @@ with tab_search:
         else:
             df_table = df_show
         df_table = df_table.drop(
-            columns=["bm25_norm", "vector_norm", "entity_match", "recency_score", "decision_signal"],
+            columns=[
+                "bm25_norm", "vector_norm", "entity_match", "recency_score",
+                "decision_signal", "field_match", "exact_rank", "exact_score",
+                "exact_tier", *SEARCH_HELPER_COLS,
+            ],
             errors="ignore",
         )
         df_table = _clean_id_columns(df_table)
@@ -1623,6 +1847,7 @@ with tab_search:
                 "bm25_score":   st.column_config.NumberColumn(T["col_score"],  format="%.3f"),
                 "search_copilot_score": st.column_config.NumberColumn(T["col_score"], format="%.3f"),
                 "entities":     st.column_config.TextColumn(T["col_entities"], width=260),
+                "match_reason": st.column_config.TextColumn(T["col_match_reason"], width=220),
                 "pdf_link":     st.column_config.LinkColumn(T["col_pdf"],      display_text="Open", width=70),
                 "pdf_download_link": st.column_config.LinkColumn(T["btn_pdf_download"], display_text="Download", width=110),
             },
@@ -1681,7 +1906,8 @@ with tab_search:
                     columns=[
                         c for c in [
                             "snippet", "pdf_link", "pdf_download_link", "bm25_norm", "vector_norm",
-                            "entity_match", "recency_score", "decision_signal",
+                            "entity_match", "recency_score", "decision_signal", "field_match",
+                            "exact_rank", "exact_score", "exact_tier", *SEARCH_HELPER_COLS,
                         ]
                         if c in _df_refined.columns
                     ]
@@ -1696,6 +1922,7 @@ with tab_search:
                         "subject":      st.column_config.TextColumn(T["col_subject"],  width=280),
                         "senderemail":  st.column_config.TextColumn(T["col_sender"],   width=180),
                         "deliverytime": st.column_config.TextColumn(T["col_received"], width=140),
+                        "match_reason": st.column_config.TextColumn(T["col_match_reason"], width=220),
                     },
                     hide_index=True,
                     height=300,
@@ -2427,7 +2654,8 @@ with tab_semantic:
                     result_display_df = result_df.drop(
                         columns=[
                             "bm25_norm", "vector_norm", "entity_match",
-                            "recency_score", "decision_signal",
+                            "recency_score", "decision_signal", "field_match",
+                            "exact_rank", "exact_score", "match_reason",
                         ],
                         errors="ignore",
                     )
