@@ -61,8 +61,15 @@ _T = {
         "case_filter_ph": "HVDC-ADOPT-SEI-0008",
         "max_rows": "최대 결과 수",
         "db_diag": "데이터 상태",
-        "confirm_reset": "DB 재다운로드를 확인합니다 (기존 캐시가 모두 삭제됩니다)",
-        "btn_reset": "캐시 초기화 + DB 재다운로드",
+        "reset_expander": "위험 작업",
+        "reset_warning": "이 작업은 현재 캐시와 로컬 DB 파일을 삭제한 뒤 다시 다운로드합니다. 실수 방지를 위해 아래 확인을 모두 완료해야 합니다.",
+        "confirm_reset": "캐시와 로컬 DB 파일 삭제 후 재다운로드를 이해했습니다.",
+        "reset_phrase_label": "확인 문구 입력",
+        "reset_phrase_help": "RESET DB를 정확히 입력해야 합니다.",
+        "reset_password_label": "앱 비밀번호 재입력",
+        "reset_password_help": "현재 앱 로그인 비밀번호와 같아야 합니다.",
+        "reset_ready": "모든 확인이 끝나면 버튼이 활성화됩니다.",
+        "btn_reset": "캐시 초기화 + DB 재다운로드 실행",
         # tabs
         "tab_search": "검색",
         "tab_analytics": "분석",
@@ -208,7 +215,14 @@ _T = {
         "case_filter_ph": "HVDC-ADOPT-SEI-0008",
         "max_rows": "Max results",
         "db_diag": "Data Status",
-        "confirm_reset": "Confirm DB re-download (all cache will be cleared)",
+        "reset_expander": "Danger Zone",
+        "reset_warning": "This deletes the current cache and local DB file, then downloads the DB again. Complete all confirmations below to prevent accidental reset.",
+        "confirm_reset": "I understand this will delete cache and the local DB file before re-download.",
+        "reset_phrase_label": "Type confirmation phrase",
+        "reset_phrase_help": "Type RESET DB exactly.",
+        "reset_password_label": "Re-enter app password",
+        "reset_password_help": "Must match the current app login password.",
+        "reset_ready": "The button is enabled only after all confirmations are complete.",
         "btn_reset": "Clear Cache + Re-download DB",
         # tabs
         "tab_search": "Search",
@@ -1745,13 +1759,39 @@ with st.sidebar:
         else:
             st.code(f"Path: {DB_LOCAL}\nNot found ✗", language="text")
 
-    _confirm_reset = st.checkbox(T["confirm_reset"])
-    if st.button(T["btn_reset"], width="stretch", disabled=not _confirm_reset):
-        st.cache_data.clear()
-        st.cache_resource.clear()
-        DB_LOCAL.unlink(missing_ok=True)
-        _DB_TMP.unlink(missing_ok=True)
-        st.rerun()
+    with st.expander(T["reset_expander"], expanded=False):
+        st.warning(T["reset_warning"])
+        _reset_phrase_value = "RESET DB"
+        _confirm_reset = st.checkbox(T["confirm_reset"], key="confirm_db_reset")
+        _reset_phrase = st.text_input(
+            T["reset_phrase_label"],
+            placeholder=_reset_phrase_value,
+            help=T["reset_phrase_help"],
+            key="reset_phrase",
+        )
+        _reset_password_ok = True
+        if _PASSWORD:
+            _reset_password = st.text_input(
+                T["reset_password_label"],
+                type="password",
+                help=T["reset_password_help"],
+                key="reset_password",
+            )
+            _reset_password_ok = _reset_password == _PASSWORD
+        _reset_ready = (
+            _confirm_reset
+            and _reset_phrase.strip() == _reset_phrase_value
+            and _reset_password_ok
+        )
+        st.caption(T["reset_ready"])
+        if st.button(T["btn_reset"], width="stretch", disabled=not _reset_ready):
+            if not _reset_ready:
+                st.stop()
+            st.cache_data.clear()
+            st.cache_resource.clear()
+            DB_LOCAL.unlink(missing_ok=True)
+            _DB_TMP.unlink(missing_ok=True)
+            st.rerun()
 
 
 # ── 탭 (3개) ─────────────────────────────────────────────────────
