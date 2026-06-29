@@ -667,6 +667,9 @@ def get_query_embedding(query: str, api_key: str = ""):
         return None
 
 
+_EMBED_DIM = 384  # must match build_db.py EMBED_DIM
+
+
 def has_embeddings() -> bool:
     try:
         df = run_query(
@@ -679,6 +682,68 @@ def has_embeddings() -> bool:
         return not cnt.empty and int(cnt.iloc[0, 0]) > 0
     except Exception:
         return False
+
+
+@st.cache_data(ttl=3600)
+def has_chunk_embeddings() -> bool:
+    """True if email_chunks table exists and has at least one embedded chunk."""
+    try:
+        tbl = run_query(
+            "SELECT COUNT(*) FROM information_schema.tables "
+            "WHERE table_name='email_chunks'"
+        )
+        if tbl.empty or int(tbl.iloc[0, 0]) == 0:
+            return False
+        cnt = run_query(
+            "SELECT COUNT(*) FROM email_chunks WHERE embedding IS NOT NULL"
+        )
+        return not cnt.empty and int(cnt.iloc[0, 0]) > 0
+    except Exception:
+        return False
+
+
+def _chunk_semantic_search(qvec: list, top_k: int) -> pd.DataFrame:
+    """Chunk-level HNSW search → deduplicate by email → return top_k rows.
+
+    Returns columns: no, cosine_score, chunk_text, section
+    (email metadata joined separately in caller)
+    """
+    fetch_limit = top_k * 10
+    chunk_df = run_query(
+        f"WITH top_chunks AS ("
+        f"    SELECT \"no\","
+        f"           array_cosine_similarity(embedding, ?::FLOAT[{_EMBED_DIM}]) AS cosine_score,"
+        f"           chunk_text, section"
+        f"    FROM   email_chunks"
+        f"    WHERE  embedding IS NOT NULL"
+        f"    ORDER BY cosine_score DESC"
+        f"    LIMIT  {fetch_limit}"
+        f")"
+        f"SELECT \"no\", MAX(cosine_score) AS cosine_score,"
+        f"       FIRST(chunk_text ORDER BY cosine_score DESC) AS chunk_text,"
+        f"       FIRST(section    ORDER BY cosine_score DESC) AS section"
+        f"FROM   top_chunks"
+        f"GROUP BY \"no\""
+        f"ORDER BY cosine_score DESC"
+        f"LIMIT  {top_k}",
+        [qvec],
+    )
+    if chunk_df.empty:
+        return pd.DataFrame()
+
+    # join email metadata
+    top_nos = chunk_df["no"].tolist()
+    placeholder = ", ".join(["?"] * len(top_nos))
+    email_meta = run_query(
+        f"SELECT \"no\", subject, sendername, deliverytime, company_name "
+        f"FROM emails WHERE \"no\" IN ({placeholder})",
+        top_nos,
+    )
+    if email_meta.empty:
+        return chunk_df
+
+    result = chunk_df.merge(email_meta, on="no", how="left")
+    return result.sort_values("cosine_score", ascending=False)
 
 
 def _query_terms(query: str) -> list[str]:
@@ -2594,10 +2659,20 @@ with tab_analytics:
 with tab_semantic:
     st.subheader(T["sem_title"])
 
-    _has_emb = has_embeddings()
-    if not _has_emb:
+    _has_emb       = has_embeddings()
+    _has_chunk_emb = has_chunk_embeddings()
+
+    if not _has_emb and not _has_chunk_emb:
         st.info(T["sem_no_emb"])
     else:
+        # Indicate which search backend is active
+        if _has_chunk_emb:
+            st.caption("🔍 청크 레벨 HNSW 시맨틱 검색 (email_chunks)" if st.session_state.lang == "ko"
+                       else "🔍 Chunk-level HNSW semantic search (email_chunks)")
+        else:
+            st.caption("🔍 이메일 레벨 시맨틱 검색 (fallback)" if st.session_state.lang == "ko"
+                       else "🔍 Email-level semantic search (fallback)")
+
         google_api_key = st.secrets.get("google_api_key", "")
         sem_query = st.text_input(
             T["sem_query_label"],
@@ -2615,14 +2690,19 @@ with tab_semantic:
 
             if qvec:
                 with st.spinner(T["sem_searching"]):
-                    vec_df = run_query(
-                        f"SELECT no, subject, sendername, deliverytime, company_name, "
-                        f"array_cosine_similarity(embedding, ?::FLOAT[384]) AS cosine_score "
-                        f"FROM emails "
-                        f"WHERE embedding IS NOT NULL "
-                        f"ORDER BY cosine_score DESC LIMIT {sem_top_k * 2}",
-                        [qvec],
-                    )
+                    # ── Primary: chunk-level HNSW search ──────────────────
+                    # ── Fallback: email-level embedding search ─────────────
+                    if _has_chunk_emb:
+                        vec_df = _chunk_semantic_search(qvec, sem_top_k * 2)
+                    else:
+                        vec_df = run_query(
+                            f"SELECT \"no\", subject, sendername, deliverytime, company_name, "
+                            f"array_cosine_similarity(embedding, ?::FLOAT[{_EMBED_DIM}]) AS cosine_score "
+                            f"FROM emails "
+                            f"WHERE embedding IS NOT NULL "
+                            f"ORDER BY cosine_score DESC LIMIT {sem_top_k * 2}",
+                            [qvec],
+                        )
 
                     if use_hybrid and sem_query:
                         hybrid_query = _rewrite_query(
@@ -2630,7 +2710,7 @@ with tab_semantic:
                             google_api_key if use_query_rewrite else "",
                         )
                         bm25_df = run_query(
-                            f"SELECT no, fts_main_emails.match_bm25(no, ?) AS bm25_score "
+                            f"SELECT \"no\", fts_main_emails.match_bm25(\"no\", ?) AS bm25_score "
                             f"FROM emails ORDER BY bm25_score DESC LIMIT {sem_top_k * 2}",
                             [hybrid_query],
                         )
@@ -2656,19 +2736,26 @@ with tab_semantic:
                             "bm25_norm", "vector_norm", "entity_match",
                             "recency_score", "decision_signal", "field_match",
                             "exact_rank", "exact_score", "match_reason",
+                            "section",
                         ],
                         errors="ignore",
                     )
+                    col_config = {
+                        "subject":       st.column_config.TextColumn(T["col_subject"],    width=200),
+                        "sendername":    st.column_config.TextColumn(T["col_sender"],     width=150),
+                        "deliverytime":  st.column_config.TextColumn(T["col_received"],   width=140),
+                        "company_name":  st.column_config.TextColumn(T["col_company"],    width=150),
+                        score_col_name:  st.column_config.NumberColumn(T["col_similarity"], format="%.4f"),
+                    }
+                    if "chunk_text" in result_display_df.columns:
+                        col_config["chunk_text"] = st.column_config.TextColumn(
+                            "매칭 청크" if st.session_state.lang == "ko" else "Matching Chunk",
+                            width=300,
+                        )
                     st.dataframe(
                         result_display_df,
                         use_container_width=True,
                         hide_index=True,
                         height=500,
-                        column_config={
-                            "subject":       st.column_config.TextColumn(T["col_subject"],   width=200),
-                            "sendername":    st.column_config.TextColumn(T["col_sender"],    width=150),
-                            "deliverytime":  st.column_config.TextColumn(T["col_received"],  width=140),
-                            "company_name":  st.column_config.TextColumn(T["col_company"],   width=150),
-                            score_col_name:  st.column_config.NumberColumn(T["col_similarity"], format="%.4f"),
-                        },
+                        column_config=col_config,
                     )

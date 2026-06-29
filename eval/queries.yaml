@@ -1,0 +1,317 @@
+meta:
+  description: "HVDC Email Search — 50-query evaluation set"
+  embed_model: "paraphrase-multilingual-MiniLM-L12-v2"
+  embed_dim: 384
+  top_k: 10
+  notes: |
+    expected_nos lists email `no` values that should appear in top-10.
+    Leave [] when ground truth is unknown; fill in after reviewing results.
+    zero_result queries must return 0 hits for zero_result_rate to be 100%.
+
+queries:
+  # ── exact_id (8) ──────────────────────────────────────────────────
+  - id: q001
+    category: exact_id
+    query: "HVDC-ADOPT-SEI-0008"
+    expected_nos: []
+    notes: "HVDC case number exact match"
+
+  - id: q002
+    category: exact_id
+    query: "5000684244"
+    expected_nos: []
+    notes: "PO number (numeric) exact match"
+
+  - id: q003
+    category: exact_id
+    query: "HVDC-ADOPT-SGI-0001"
+    expected_nos: []
+    notes: "SGI case number exact match"
+
+  - id: q004
+    category: exact_id
+    query: "MRR-2025-001"
+    expected_nos: []
+    notes: "MRR document reference"
+
+  - id: q005
+    category: exact_id
+    query: "BOE-UAE-2025"
+    expected_nos: []
+    notes: "Bill of Entry reference"
+
+  - id: q006
+    category: exact_id
+    query: "HVDC-DAS-001"
+    expected_nos: []
+    notes: "DAS site reference"
+
+  - id: q007
+    category: exact_id
+    query: "AGI FANR approval"
+    expected_nos: []
+    notes: "AGI site FANR approval reference"
+
+  - id: q008
+    category: exact_id
+    query: "COSCO vessel BL number"
+    expected_nos: []
+    notes: "COSCO bill of lading number"
+
+  # ── vendor_doc (8) ────────────────────────────────────────────────
+  - id: q009
+    category: vendor_doc
+    query: "DSV invoice"
+    expected_nos: []
+    notes: "DSV vendor invoice documents"
+
+  - id: q010
+    category: vendor_doc
+    query: "Mammoet MRR"
+    expected_nos: []
+    notes: "Mammoet material receiving report"
+
+  - id: q011
+    category: vendor_doc
+    query: "ALS bill of lading"
+    expected_nos: []
+    notes: "ALS vendor bill of lading"
+
+  - id: q012
+    category: vendor_doc
+    query: "COSCO shipping schedule"
+    expected_nos: []
+    notes: "COSCO vessel shipping schedule"
+
+  - id: q013
+    category: vendor_doc
+    query: "ADNOC FANR approval"
+    expected_nos: []
+    notes: "ADNOC FANR regulatory approval"
+
+  - id: q014
+    category: vendor_doc
+    query: "HMM customs clearance"
+    expected_nos: []
+    notes: "HMM vessel customs clearance docs"
+
+  - id: q015
+    category: vendor_doc
+    query: "Samsung C&T progress payment"
+    expected_nos: []
+    notes: "Samsung C&T IPC progress payment"
+
+  - id: q016
+    category: vendor_doc
+    query: "SCT packing list inspection"
+    expected_nos: []
+    notes: "SCT packing list and inspection docs"
+
+  # ── issue (8) ─────────────────────────────────────────────────────
+  - id: q017
+    category: issue
+    query: "demurrage claim"
+    expected_nos: []
+    notes: "DEM demurrage claim dispute"
+
+  - id: q018
+    category: issue
+    query: "detention dispute invoice"
+    expected_nos: []
+    notes: "DET detention charge dispute"
+
+  - id: q019
+    category: issue
+    query: "customs clearance delay"
+    expected_nos: []
+    notes: "Customs hold or delay notification"
+
+  - id: q020
+    category: issue
+    query: "cargo damage insurance claim"
+    expected_nos: []
+    notes: "Cargo damage during transport"
+
+  - id: q021
+    category: issue
+    query: "delayed material receipt MRR"
+    expected_nos: []
+    notes: "Late arrival material receiving"
+
+  - id: q022
+    category: issue
+    query: "invoice discrepancy amount"
+    expected_nos: []
+    notes: "Invoice amount does not match PO"
+
+  - id: q023
+    category: issue
+    query: "port congestion vessel hold"
+    expected_nos: []
+    notes: "Port congestion causing vessel hold"
+
+  - id: q024
+    category: issue
+    query: "missing packing list documents"
+    expected_nos: []
+    notes: "Missing required shipping documents"
+
+  # ── date_vendor (8) ───────────────────────────────────────────────
+  - id: q025
+    category: date_vendor
+    query: "DSV March 2025"
+    expected_nos: []
+    notes: "DSV emails from March 2025"
+
+  - id: q026
+    category: date_vendor
+    query: "Mammoet January 2025"
+    expected_nos: []
+    notes: "Mammoet emails from January 2025"
+
+  - id: q027
+    category: date_vendor
+    query: "ALS April 2025 delivery"
+    expected_nos: []
+    notes: "ALS delivery in April 2025"
+
+  - id: q028
+    category: date_vendor
+    query: "COSCO February 2025 shipment"
+    expected_nos: []
+    notes: "COSCO shipment in February 2025"
+
+  - id: q029
+    category: date_vendor
+    query: "ADNOC 2025 approval notification"
+    expected_nos: []
+    notes: "ADNOC approval notices in 2025"
+
+  - id: q030
+    category: date_vendor
+    query: "AGI site December 2024"
+    expected_nos: []
+    notes: "AGI site emails from December 2024"
+
+  - id: q031
+    category: date_vendor
+    query: "DAS site 2025 inspection"
+    expected_nos: []
+    notes: "DAS site inspection emails in 2025"
+
+  - id: q032
+    category: date_vendor
+    query: "MIR site 2024 demurrage"
+    expected_nos: []
+    notes: "MIR site demurrage in 2024"
+
+  # ── Korean (8) ────────────────────────────────────────────────────
+  - id: q033
+    category: Korean
+    query: "디머리지 클레임"
+    expected_nos: []
+    notes: "Korean: demurrage claim"
+
+  - id: q034
+    category: Korean
+    query: "통관지연"
+    expected_nos: []
+    notes: "Korean: customs clearance delay"
+
+  - id: q035
+    category: Korean
+    query: "검수보고서 승인"
+    expected_nos: []
+    notes: "Korean: material receiving report approval"
+
+  - id: q036
+    category: Korean
+    query: "선적서류 확인 요청"
+    expected_nos: []
+    notes: "Korean: shipping document confirmation request"
+
+  - id: q037
+    category: Korean
+    query: "비용정산 요청"
+    expected_nos: []
+    notes: "Korean: cost settlement request"
+
+  - id: q038
+    category: Korean
+    query: "납품 지연 통보"
+    expected_nos: []
+    notes: "Korean: delivery delay notification"
+
+  - id: q039
+    category: Korean
+    query: "승인 대기 서류"
+    expected_nos: []
+    notes: "Korean: documents pending approval"
+
+  - id: q040
+    category: Korean
+    query: "포장명세서 확인"
+    expected_nos: []
+    notes: "Korean: packing list verification"
+
+  # ── semantic (8) ──────────────────────────────────────────────────
+  - id: q041
+    category: semantic
+    query: "cargo delivery schedule problems at port"
+    expected_nos: []
+    notes: "Semantic: port logistics delays"
+
+  - id: q042
+    category: semantic
+    query: "payment dispute resolution with vendor"
+    expected_nos: []
+    notes: "Semantic: financial dispute"
+
+  - id: q043
+    category: semantic
+    query: "heavy equipment damage during sea transport"
+    expected_nos: []
+    notes: "Semantic: cargo damage claim"
+
+  - id: q044
+    category: semantic
+    query: "regulatory authority document approval correspondence"
+    expected_nos: []
+    notes: "Semantic: FANR/customs regulatory approval"
+
+  - id: q045
+    category: semantic
+    query: "vendor late delivery penalty clause"
+    expected_nos: []
+    notes: "Semantic: late delivery penalty enforcement"
+
+  - id: q046
+    category: semantic
+    query: "emergency logistics support request"
+    expected_nos: []
+    notes: "Semantic: urgent logistics escalation"
+
+  - id: q047
+    category: semantic
+    query: "transformer installation schedule coordination"
+    expected_nos: []
+    notes: "Semantic: equipment installation planning"
+
+  - id: q048
+    category: semantic
+    query: "heavy lift cargo handling offshore"
+    expected_nos: []
+    notes: "Semantic: MOSB heavy lift operations"
+
+  # ── zero_result (2) ───────────────────────────────────────────────
+  - id: q049
+    category: zero_result
+    query: "xxxxxxxnonexistentquerythatreturnsnothing12345"
+    expected_nos: []
+    notes: "Must return 0 results"
+
+  - id: q050
+    category: zero_result
+    query: "ZZZZZ-FAKE-CASE-999999-NONEXISTENT-HVDC-QUERY"
+    expected_nos: []
+    notes: "Must return 0 results"
