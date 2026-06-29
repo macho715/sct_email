@@ -915,10 +915,12 @@ hr {
         max-width: 100% !important;
         height: auto !important;
         min-height: auto !important;
-        z-index: 1 !important;
+        z-index: 100 !important;
         border-right: none !important;
         border-bottom: 1px solid var(--hvdc-border) !important;
     }
+    /* 모바일에서 그리드 오버레이가 사이드바 위에 겹치지 않도록 숨김 */
+    .stApp::after { display: none !important; }
     [data-testid="stSidebarUserContent"],
     [data-testid="stSidebarContent"] {
         padding: 0.75rem 0.85rem !important;
@@ -989,12 +991,10 @@ hr {
         padding: 10px 12px !important;
     }
 
-    /* ─── Buttons ─── */
+    /* ─── Buttons — 터치 타깃만 보장, 너비는 자연스럽게 ─── */
     .stButton > button,
     [data-testid="stDownloadButton"] > button {
-        width: 100% !important;
-        min-height: 48px !important;
-        font-size: 0.88rem !important;
+        min-height: 44px !important;
     }
 
     /* ─── Metric cards — 2-up grid on mobile ─── */
