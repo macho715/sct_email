@@ -2630,7 +2630,7 @@ with tab_analytics:
 
     @st.cache_data(ttl=3600)
     def load_network_data():
-        return run_query("""
+        df = run_query("""
             SELECT
                 COALESCE(company_name, SPLIT_PART(senderemail, '@', 2)) AS source,
                 COALESCE(
@@ -2647,6 +2647,9 @@ with tab_analytics:
             ORDER BY weight DESC
             LIMIT 150
         """)
+        if isinstance(df, pd.DataFrame):
+            return df
+        return pd.DataFrame(columns=["source", "target", "weight"])
 
     vol_df = load_monthly_volume()
     top_df = load_top_senders(20)
@@ -2810,6 +2813,8 @@ with tab_analytics:
         st.caption(T["net_caption"])
 
         net_df = load_network_data()
+        if not isinstance(net_df, pd.DataFrame):
+            net_df = pd.DataFrame(columns=["source", "target", "weight"])
         if net_df.empty:
             st.info(T["net_no_data"])
         else:
