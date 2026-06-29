@@ -16,21 +16,22 @@ DB_URL   = "https://github.com/macho715/sct_email/releases/download/v2.1/hvdc_ma
 DB_LOCAL = Path("/tmp/hvdc_mail_v21.duckdb")       # v2.1: multilingual embeddings
 _DB_TMP  = Path("/tmp/hvdc_mail_v21.duckdb.tmp")   # path bump forces re-download
 
-# ── 브랜드 색상 (Samsung C&T Navy) ──────────────────────────────────
+# ── 브랜드 색상 (HVDC dark operations theme) ────────────────────────
 _SEQ = [
-    [0.0, "#EBF5FB"], [0.25, "#AED6F1"],
-    [0.5,  "#5DADE2"], [0.75, "#2471A3"],
-    [1.0,  "#1F5276"],
+    [0.0, "#27272A"], [0.22, "#3F3F46"],
+    [0.48, "#71717A"], [0.74, "#D4A72C"],
+    [1.0, "#F2B705"],
 ]
 _CHART = dict(
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
-    font=dict(family="system-ui, -apple-system, sans-serif", size=12),
-    margin=dict(l=0, r=0, t=32, b=0),
+    font=dict(family="Pretendard, Geist, system-ui, -apple-system, sans-serif", size=12, color="#E7E5E4"),
+    margin=dict(l=0, r=0, t=34, b=0),
+    hoverlabel=dict(bgcolor="#18181B", bordercolor="#F2B705", font=dict(color="#FAFAF9")),
 )
 _PIE_COLORS = [
-    "#1F5276", "#2E86C1", "#5DADE2", "#A3E4D7",
-    "#F4D03F", "#E67E22", "#A569BD", "#7F8C8D",
+    "#F2B705", "#D4A72C", "#A16207", "#78716C",
+    "#57534E", "#44403C", "#3F3F46", "#27272A",
 ]
 
 DELIVERY_DESC_SQL = (
@@ -130,7 +131,7 @@ _T = {
         "site_no_data": "Site 데이터가 없습니다.",
         "stage_no_data": "Stage 데이터가 없습니다.",
         "net_title": "회사 이메일 네트워크",
-        "net_caption": "발신 회사 → 수신 도메인 흐름 (5건 이상만 표시)",
+        "net_caption": "발신 회사에서 수신 도메인까지의 흐름 (5건 이상만 표시)",
         "net_no_data": "네트워크 데이터가 없습니다.",
         "net_fallback": "networkx 미설치 — 상위 연결 현황으로 대체 표시합니다. `pip install networkx`",
         "col_source": "발신 회사",
@@ -284,7 +285,7 @@ _T = {
         "site_no_data": "No site data available.",
         "stage_no_data": "No stage data available.",
         "net_title": "Company Email Network",
-        "net_caption": "Sender company → Recipient domain flow (5+ emails only)",
+        "net_caption": "Sender company to recipient domain flow (5+ emails only)",
         "net_no_data": "No network data available.",
         "net_fallback": "networkx not installed — showing top connections instead. `pip install networkx`",
         "col_source": "Sender Company",
@@ -357,7 +358,7 @@ _T = {
 # ─────────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="HVDC Email Search",
-    page_icon="✉",
+    page_icon=":material/search:",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -378,6 +379,9 @@ if _PASSWORD:
 
 st.markdown("""
 <style>
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.min.css');
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@500;600;700;800&display=swap');
+
 /* ─── LAYOUT ─── */
 [data-testid="block-container"] { padding: 1rem 2rem 2rem !important; }
 
@@ -527,6 +531,398 @@ input, textarea, [data-testid="stTextInput"] input,
     .hvdc-header { padding: 12px 14px !important; }
     .hvdc-header-title { font-size: 1.1rem !important; }
     .hvdc-header-badge { display: none !important; }
+}
+
+/* ─── SUPANOVA OPS REDESIGN ─── */
+:root {
+    --hvdc-bg: #0B0C0E;
+    --hvdc-panel: rgba(24, 24, 27, 0.78);
+    --hvdc-panel-strong: rgba(39, 39, 42, 0.92);
+    --hvdc-border: rgba(250, 250, 249, 0.10);
+    --hvdc-border-strong: rgba(242, 183, 5, 0.34);
+    --hvdc-text: #FAFAF9;
+    --hvdc-muted: #A8A29E;
+    --hvdc-soft: #E7E5E4;
+    --hvdc-accent: #F2B705;
+    --hvdc-accent-deep: #A16207;
+}
+
+html, body, [class*="css"] {
+    font-family: 'Pretendard', 'Geist', system-ui, -apple-system, BlinkMacSystemFont, sans-serif !important;
+    word-break: keep-all;
+}
+
+.stApp {
+    background:
+        radial-gradient(circle at 82% 8%, rgba(242, 183, 5, 0.18), transparent 30rem),
+        radial-gradient(circle at 6% 24%, rgba(120, 113, 108, 0.20), transparent 27rem),
+        linear-gradient(145deg, #0B0C0E 0%, #141414 48%, #1C1917 100%) !important;
+    color: var(--hvdc-text);
+}
+
+.stApp::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    pointer-events: none;
+    opacity: 0.075;
+    background-image:
+        linear-gradient(rgba(255,255,255,0.65) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.65) 1px, transparent 1px);
+    background-size: 28px 28px;
+    mask-image: linear-gradient(to bottom, transparent, black 18%, black 82%, transparent);
+}
+
+[data-testid="block-container"] {
+    max-width: 1440px !important;
+    padding: 1.25rem 2rem 2.5rem !important;
+}
+
+[data-testid="stHeader"],
+[data-testid="stToolbar"] {
+    background: transparent !important;
+}
+
+h1, h2, h3, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
+    color: var(--hvdc-text) !important;
+    letter-spacing: 0 !important;
+}
+
+p, li, label, span, div {
+    letter-spacing: 0 !important;
+}
+
+.hvdc-header {
+    position: relative;
+    overflow: hidden;
+    min-height: 184px;
+    align-items: flex-end;
+    gap: 22px;
+    padding: 28px 32px;
+    margin: 0 0 1.4rem;
+    border-radius: 8px;
+    border: 1px solid var(--hvdc-border);
+    background:
+        linear-gradient(115deg, rgba(24,24,27,0.96) 0%, rgba(24,24,27,0.84) 48%, rgba(68,64,60,0.76) 100%),
+        radial-gradient(circle at 86% 22%, rgba(242,183,5,0.28), transparent 22rem);
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.10),
+        0 28px 90px rgba(0,0,0,0.32);
+}
+
+.hvdc-header::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+        linear-gradient(90deg, rgba(242,183,5,0.28), transparent 34%),
+        linear-gradient(180deg, rgba(255,255,255,0.06), transparent 34%);
+    opacity: 0.78;
+}
+
+.hvdc-header-mark {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 64px;
+    height: 64px;
+    flex: 0 0 64px;
+    border-radius: 8px;
+    border: 1px solid var(--hvdc-border-strong);
+    background: rgba(242,183,5,0.10);
+    color: var(--hvdc-accent);
+    font-family: 'Geist', 'Pretendard', sans-serif;
+    font-weight: 800;
+    font-size: 1rem;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.14);
+}
+
+.hvdc-header-text {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+}
+
+.hvdc-header-kicker {
+    color: var(--hvdc-accent);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.14em !important;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+}
+
+.hvdc-header-title {
+    color: var(--hvdc-text);
+    font-size: clamp(2.1rem, 4.4vw, 4.35rem);
+    line-height: 1.08;
+    font-weight: 800;
+    letter-spacing: 0 !important;
+}
+
+.hvdc-header-caption {
+    max-width: 64ch;
+    margin-top: 10px;
+    color: var(--hvdc-muted);
+    font-size: 0.98rem;
+    line-height: 1.7;
+}
+
+.hvdc-header-status {
+    position: relative;
+    display: grid;
+    gap: 8px;
+    justify-items: end;
+    flex: 0 0 auto;
+}
+
+.hvdc-header-badge,
+.hvdc-header-live {
+    border-radius: 999px;
+    border: 1px solid var(--hvdc-border);
+    background: rgba(250,250,249,0.06);
+    color: var(--hvdc-soft);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.10);
+}
+
+.hvdc-header-badge {
+    padding: 8px 14px;
+    font-size: 0.74rem;
+    font-weight: 800;
+}
+
+.hvdc-header-live {
+    padding: 6px 12px;
+    color: var(--hvdc-muted);
+    font-size: 0.72rem;
+}
+
+.hvdc-panel-title {
+    margin: 0 0 1rem;
+    padding: 18px 20px;
+    border: 1px solid var(--hvdc-border);
+    border-radius: 8px;
+    background: rgba(24,24,27,0.62);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+}
+
+.hvdc-panel-title strong {
+    display: block;
+    color: var(--hvdc-text);
+    font-size: 1.08rem;
+    font-weight: 800;
+    margin-bottom: 4px;
+}
+
+.hvdc-panel-title span {
+    color: var(--hvdc-muted);
+    font-size: 0.9rem;
+    line-height: 1.55;
+}
+
+[data-testid="stSidebar"] {
+    background: rgba(15, 15, 16, 0.96) !important;
+    border-right: 1px solid var(--hvdc-border) !important;
+}
+
+[data-testid="stSidebar"] * {
+    color: var(--hvdc-soft) !important;
+}
+
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .stMarkdown p {
+    color: var(--hvdc-muted) !important;
+}
+
+.sidebar-label {
+    color: var(--hvdc-accent) !important;
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.12em !important;
+}
+
+[data-testid="stSidebar"] [data-testid="stExpander"],
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div:has(> [data-testid="stMarkdownContainer"]) {
+    background: transparent !important;
+}
+
+[data-testid="stMetric"],
+[data-testid="stDataFrame"],
+[data-testid="stExpander"],
+[data-testid="stPlotlyChart"],
+[data-testid="stTextArea"] textarea {
+    background: var(--hvdc-panel) !important;
+    border: 1px solid var(--hvdc-border) !important;
+    border-radius: 8px !important;
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.08),
+        0 18px 44px rgba(0,0,0,0.20) !important;
+}
+
+[data-testid="stMetric"] {
+    min-height: 118px;
+    padding: 18px 20px !important;
+    border-top: 1px solid var(--hvdc-border-strong) !important;
+}
+
+[data-testid="stMetricValue"] {
+    color: var(--hvdc-accent) !important;
+    font-family: 'Geist', 'Pretendard', sans-serif !important;
+    font-size: clamp(1.55rem, 2.4vw, 2.05rem) !important;
+    font-weight: 800 !important;
+}
+
+[data-testid="stMetricLabel"] {
+    color: var(--hvdc-muted) !important;
+    font-size: 0.72rem !important;
+    font-weight: 800 !important;
+}
+
+.stTabs [data-baseweb="tab-list"] {
+    gap: 6px;
+    padding: 6px;
+    border: 1px solid var(--hvdc-border);
+    border-radius: 8px;
+    background: rgba(24,24,27,0.72);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+}
+
+.stTabs [role="tab"] {
+    min-height: 46px !important;
+    border-radius: 6px !important;
+    color: var(--hvdc-muted) !important;
+    font-weight: 800 !important;
+}
+
+.stTabs [role="tab"]:hover {
+    background: rgba(242,183,5,0.10) !important;
+    color: var(--hvdc-text) !important;
+}
+
+.stTabs [data-baseweb="tab"][aria-selected="true"] {
+    background: var(--hvdc-accent) !important;
+    color: #141414 !important;
+    box-shadow: 0 10px 22px rgba(242,183,5,0.16) !important;
+}
+
+[data-testid="stTextInput"] input,
+[data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
+[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+[data-testid="stNumberInput"] input,
+textarea {
+    background: rgba(250,250,249,0.05) !important;
+    color: var(--hvdc-text) !important;
+    border: 1px solid var(--hvdc-border) !important;
+    border-radius: 8px !important;
+}
+
+[data-testid="stTextInput"] input:focus,
+[data-testid="stTextArea"] textarea:focus {
+    border-color: var(--hvdc-accent) !important;
+    box-shadow: 0 0 0 3px rgba(242,183,5,0.16) !important;
+}
+
+.stButton > button,
+.stLinkButton > a,
+[data-testid="stDownloadButton"] > button {
+    min-height: 46px !important;
+    border-radius: 8px !important;
+    border: 1px solid var(--hvdc-border) !important;
+    background: rgba(250,250,249,0.06) !important;
+    color: var(--hvdc-text) !important;
+    font-weight: 800 !important;
+    transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s ease, border-color 0.2s ease !important;
+}
+
+.stButton > button[kind="primary"],
+.stLinkButton > a[kind="primary"],
+[data-testid="stDownloadButton"] > button {
+    background: var(--hvdc-accent) !important;
+    color: #141414 !important;
+    border-color: rgba(242,183,5,0.72) !important;
+}
+
+.stButton > button:hover,
+.stLinkButton > a:hover,
+[data-testid="stDownloadButton"] > button:hover {
+    transform: translateY(-1px) scale(1.01);
+    border-color: var(--hvdc-border-strong) !important;
+}
+
+.stButton > button:active,
+.stLinkButton > a:active,
+[data-testid="stDownloadButton"] > button:active {
+    transform: scale(0.98);
+}
+
+div[data-testid="stAlert"] {
+    background: rgba(39,39,42,0.92) !important;
+    color: var(--hvdc-soft) !important;
+    border: 1px solid var(--hvdc-border) !important;
+    border-left: 3px solid var(--hvdc-accent) !important;
+}
+
+.ai-summary-card,
+.email-card {
+    background: var(--hvdc-panel-strong);
+    border: 1px solid var(--hvdc-border);
+    border-radius: 8px;
+    color: var(--hvdc-soft);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+}
+
+.email-card:hover {
+    border-color: var(--hvdc-border-strong);
+    box-shadow: 0 18px 44px rgba(0,0,0,0.24);
+}
+
+.email-card-subject { color: var(--hvdc-text); }
+.email-card-meta,
+.email-card-snippet { color: var(--hvdc-muted); }
+
+.tag-pill,
+.score-badge {
+    background: rgba(242,183,5,0.12);
+    color: var(--hvdc-accent);
+    border: 1px solid var(--hvdc-border-strong);
+    border-radius: 999px;
+}
+
+hr {
+    border-color: var(--hvdc-border) !important;
+}
+
+::-webkit-scrollbar-track { background: rgba(24,24,27,0.82); }
+::-webkit-scrollbar-thumb { background: #57534E; }
+::-webkit-scrollbar-thumb:hover { background: #A8A29E; }
+
+@media (max-width: 768px) {
+    [data-testid="block-container"] {
+        padding: 0.85rem 0.85rem 1.4rem !important;
+    }
+    .hvdc-header {
+        min-height: auto;
+        display: grid;
+        grid-template-columns: auto 1fr;
+        padding: 20px 18px !important;
+    }
+    .hvdc-header-mark {
+        width: 48px;
+        height: 48px;
+        font-size: 0.82rem;
+    }
+    .hvdc-header-title {
+        font-size: 2rem !important;
+    }
+    .hvdc-header-status {
+        grid-column: 1 / -1;
+        justify-items: start;
+    }
+    .hvdc-header-badge {
+        display: inline-flex !important;
+    }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -1394,7 +1790,7 @@ def _pdf_parts(linkkey) -> list:
         if not file_id:
             continue
         url = _drive_view_url(file_id)
-        out.append((f"📄 PDF part {i}" if multi else "📄 PDF", url))
+        out.append((f"PDF part {i}" if multi else "PDF", url))
     return out
 
 
@@ -1448,7 +1844,7 @@ def _pdf_parts_for_email(*values) -> list:
         file_id = str(it.get("id", "")).strip()
         if not file_id:
             continue
-        out.append((f"📄 PDF part {i}" if multi else "📄 PDF", _drive_view_url(file_id)))
+        out.append((f"PDF part {i}" if multi else "PDF", _drive_view_url(file_id)))
     return out
 
 
@@ -1637,12 +2033,16 @@ T = _T[st.session_state.lang]
 # ── 헤더 ─────────────────────────────────────────────────────────
 st.markdown(f"""
 <div class="hvdc-header">
-    <span class="hvdc-header-icon">✉</span>
-    <div>
+    <div class="hvdc-header-mark">HV</div>
+    <div class="hvdc-header-text">
+        <div class="hvdc-header-kicker">Project Mail Operations</div>
         <div class="hvdc-header-title">HVDC Email Search</div>
         <div class="hvdc-header-caption">{T["caption"]}</div>
     </div>
-    <div class="hvdc-header-badge">{T["header_badge"]}</div>
+    <div class="hvdc-header-status">
+        <div class="hvdc-header-badge">{T["header_badge"]}</div>
+        <div class="hvdc-header-live">Search / Analytics / Semantic</div>
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -1667,11 +2067,11 @@ if not DB_LOCAL.exists():
                             _pct = min(int(_downloaded / _total * 100), 100)
                             _bar.progress(_pct, text=f"{_downloaded//1024//1024} MB / {_total//1024//1024} MB")
             _DB_TMP.rename(DB_LOCAL)
-            _status.update(label=f"✅ {T['db_ok']}", state="complete")
+            _status.update(label=f"OK - {T['db_ok']}", state="complete")
         except Exception as _exc:
             _DB_TMP.unlink(missing_ok=True)
             _download_error = str(_exc)
-            _status.update(label=f"❌ {T['db_fail']}", state="error")
+            _status.update(label=f"ERROR - {T['db_fail']}", state="error")
     if _download_error:
         st.error(T["db_err"] + _download_error)
         st.stop()
@@ -1743,7 +2143,7 @@ with st.sidebar:
     with st.expander(T["db_diag"], expanded=False):
         if DB_LOCAL.exists():
             _size_mb = DB_LOCAL.stat().st_size // 1024 // 1024
-            st.code(f"Path: {DB_LOCAL}\nSize: {_size_mb} MB\nExists: ✓", language="text")
+            st.code(f"Path: {DB_LOCAL}\nSize: {_size_mb} MB\nExists: YES", language="text")
             try:
                 _emb_df = run_query("SELECT COUNT(*) FROM emails WHERE embedding IS NOT NULL")
                 _emb_n = int(_emb_df.iloc[0, 0]) if not _emb_df.empty else 0
@@ -1757,7 +2157,7 @@ with st.sidebar:
                 )
                 st.code(f"{_meaning_error}:\n{_e}", language="text")
         else:
-            st.code(f"Path: {DB_LOCAL}\nNot found ✗", language="text")
+            st.code(f"Path: {DB_LOCAL}\nNot found", language="text")
 
     with st.expander(T["reset_expander"], expanded=False):
         st.warning(T["reset_warning"])
@@ -1806,6 +2206,16 @@ tab_search, tab_analytics, tab_semantic = st.tabs([
 # TAB 1 — 검색 + AI 요약 + Case 스레드
 # ════════════════════════════════════════════════════════════════
 with tab_search:
+    _search_title = "검색 워크스페이스" if st.session_state.lang == "ko" else "Search workspace"
+    _search_desc = (
+        "키워드, 현장, 단계, 발신자 조건을 조합해 프로젝트 메일과 첨부 PDF를 빠르게 좁힙니다."
+        if st.session_state.lang == "ko"
+        else "Combine keyword, site, stage, and sender filters to narrow project emails and linked PDFs."
+    )
+    st.markdown(
+        f'<div class="hvdc-panel-title"><strong>{_search_title}</strong><span>{_search_desc}</span></div>',
+        unsafe_allow_html=True,
+    )
 
     BASE_COLS_SHOW = [
         "no", "deliverytime", "month", "subject", "sendername", "senderemail",
@@ -2060,19 +2470,19 @@ with tab_search:
 
     st.divider()
     if search_mode == "glossary":
-        st.caption(f"🎯 도메인 검색: `{ko_raw_query}` (한글 정확매칭 우선) + 영어 `{' OR '.join(ko_en_terms)}` 회수")
+        st.caption(f"도메인 검색: `{ko_raw_query}` (한글 정확매칭 우선) + 영어 `{' OR '.join(ko_en_terms)}` 회수")
     elif search_mode == "ilike":
-        st.caption(f"🔍 한글 검색: `{ko_raw_query}` (최신순 정렬)")
+        st.caption(f"한글 검색: `{ko_raw_query}` (최신순 정렬)")
     elif search_mode == "rewrite":
-        st.caption(f"🔍 확장 검색: `{bm25_query}`")
+        st.caption(f"확장 검색: `{bm25_query}`")
     elif search_mode == "token":
-        st.caption(f"🧩 토큰 분리 검색(폴백): `{bm25_query}`")
+        st.caption(f"토큰 분리 검색(폴백): `{bm25_query}`")
     elif search_mode == "ilike_fb":
-        st.caption(f"⚠ 부분 일치(폴백): `{query_text}` substring")
+        st.caption(f"부분 일치(폴백): `{query_text}` substring")
     elif search_mode == "exact":
-        st.caption(f"🎯 정확 식별자 검색: `{query_text}`")
+        st.caption(f"정확 식별자 검색: `{query_text}`")
     if query_text and not exact_df.empty:
-        st.caption(f"🎯 정확 식별자 보강: {len(exact_df):,}건을 상위 랭킹에 반영")
+        st.caption(f"정확 식별자 보강: {len(exact_df):,}건을 상위 랭킹에 반영")
     if query_entities:
         st.caption(f"{T['detected_entities']}: {_entity_chip_text(query_entities)}")
 
@@ -2225,7 +2635,7 @@ with tab_search:
                         _refine_text, case=False, na=False
                     )
             _df_refined = df_show[_mask]
-            st.caption(f"🔍 **'{_refine_text}'** — {len(_df_refined)}건")
+            st.caption(f"**'{_refine_text}'** - {len(_df_refined)}건")
             if not _df_refined.empty:
                 _df_ref_table = _df_refined.drop(
                     columns=[
@@ -2555,6 +2965,16 @@ with tab_search:
 # TAB 2 — 분석 (Feature 4: 네트워크 그래프)
 # ════════════════════════════════════════════════════════════════
 with tab_analytics:
+    _analytics_title = "메일 흐름 대시보드" if st.session_state.lang == "ko" else "Mail flow dashboard"
+    _analytics_desc = (
+        "월별 물량, 핵심 발신자, 현장 분포, 회사 간 흐름을 한 화면에서 확인합니다."
+        if st.session_state.lang == "ko"
+        else "Review monthly volume, top senders, site distribution, and company-to-domain flows in one view."
+    )
+    st.markdown(
+        f'<div class="hvdc-panel-title"><strong>{_analytics_title}</strong><span>{_analytics_desc}</span></div>',
+        unsafe_allow_html=True,
+    )
 
     @st.cache_data(ttl=3600)
     def load_monthly_volume():
@@ -2924,7 +3344,7 @@ with tab_analytics:
             except ImportError:
                 st.info(T["net_fallback"])
                 top_net = net_df.sort_values("weight", ascending=False).head(30)
-                top_net["link"] = top_net["source"] + " → " + top_net["target"]
+                top_net["link"] = top_net["source"] + " to " + top_net["target"]
                 fig_fallback = px.bar(
                     top_net, x="weight", y="link", orientation="h",
                     labels={"weight": T["col_weight"], "link": ""},
@@ -2950,6 +3370,16 @@ with tab_analytics:
 # TAB 3 — 시맨틱 검색 (Feature 2)
 # ════════════════════════════════════════════════════════════════
 with tab_semantic:
+    _sem_panel_title = "의미 검색" if st.session_state.lang == "ko" else "Semantic retrieval"
+    _sem_panel_desc = (
+        "본문 의미가 가까운 메일을 찾아 키워드가 다른 관련 이슈까지 추적합니다."
+        if st.session_state.lang == "ko"
+        else "Find emails with similar meaning, even when the wording differs from the query."
+    )
+    st.markdown(
+        f'<div class="hvdc-panel-title"><strong>{_sem_panel_title}</strong><span>{_sem_panel_desc}</span></div>',
+        unsafe_allow_html=True,
+    )
     st.subheader(T["sem_title"])
 
     _has_emb       = has_embeddings()
@@ -2960,11 +3390,11 @@ with tab_semantic:
     else:
         # Indicate which search backend is active
         if _has_chunk_emb:
-            st.caption("🔍 본문 문장까지 비교해 관련 메일을 찾습니다." if st.session_state.lang == "ko"
-                       else "🔍 Finds related emails by comparing message text.")
+            st.caption("본문 문장까지 비교해 관련 메일을 찾습니다." if st.session_state.lang == "ko"
+                       else "Finds related emails by comparing message text.")
         else:
-            st.caption("🔍 이메일 전체 내용을 기준으로 관련 메일을 찾습니다." if st.session_state.lang == "ko"
-                       else "🔍 Finds related emails from the whole email text.")
+            st.caption("이메일 전체 내용을 기준으로 관련 메일을 찾습니다." if st.session_state.lang == "ko"
+                       else "Finds related emails from the whole email text.")
 
         google_api_key = st.secrets.get("google_api_key", "")
         sem_query = st.text_input(
