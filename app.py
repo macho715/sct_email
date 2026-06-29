@@ -876,6 +876,74 @@ def _query_terms(query: str) -> list[str]:
     return list(dict.fromkeys(terms))
 
 
+def _compact_identifier_value(value) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    import re
+    return re.sub(r"[^a-z0-9]", "", str(value).lower())
+
+
+def _identifier_code_variants(value: str) -> list[str]:
+    import re
+    text = str(value or "")
+    variants: list[str] = []
+
+    def add(candidate: str) -> None:
+        candidate = re.sub(r"\s+", " ", str(candidate or "")).strip(" ,.;:()[]{}")
+        if candidate and candidate not in variants:
+            variants.append(candidate)
+
+    for match in re.finditer(r"\b([A-Za-z]{2,10})[-_/\s]*([0-9]{2,6})\b", text, flags=re.IGNORECASE):
+        prefix = match.group(1)
+        number = match.group(2)
+        add(match.group(0))
+        add(f"{prefix}-{number}")
+        add(f"{prefix}/{number}")
+        add(f"{prefix}_{number}")
+        add(f"{prefix} {number}")
+        add(f"{prefix}{number}")
+    return variants
+
+
+def _identifier_variants(value) -> list[str]:
+    import re
+    text = re.sub(r"\s+", " ", str(value or "")).strip(" ,.;:()[]{}")
+    variants: list[str] = []
+
+    def add(candidate: str) -> None:
+        candidate = re.sub(r"\s+", " ", str(candidate or "")).strip(" ,.;:()[]{}")
+        if candidate and candidate not in variants:
+            variants.append(candidate)
+
+    add(text)
+    compact = _compact_identifier_value(text)
+    if compact:
+        add(compact)
+    for candidate in _identifier_code_variants(text):
+        add(candidate)
+        compact_candidate = _compact_identifier_value(candidate)
+        if compact_candidate:
+            add(compact_candidate)
+    return variants
+
+
+def _matches_identifier_text(term: str, text: str) -> bool:
+    term_text = str(term or "").lower()
+    text_value = str(text or "")
+    text_lower = text_value.lower()
+    if term_text and term_text in text_lower:
+        return True
+    compact_term = _compact_identifier_value(term_text)
+    if not compact_term:
+        return False
+    return compact_term in _compact_identifier_value(text_value)
+
+
 def _mask_sensitive_text(text: str) -> str:
     import re
     masked = re.sub(
@@ -900,7 +968,7 @@ def _extract_snippet(body: str, query: str, context_chars: int = 150) -> str:
     if not body or not query:
         return ""
     import re
-    terms = _query_terms(query)
+    terms = _identifier_terms(query) or _query_terms(query)
     if not terms:
         return ""
 
@@ -916,8 +984,7 @@ def _extract_snippet(body: str, query: str, context_chars: int = 150) -> str:
     scored = []
     lower_terms = [t.lower() for t in terms]
     for idx, sentence in enumerate(sentences):
-        sent_lower = sentence.lower()
-        score = sum(2 if t in sent_lower else 0 for t in lower_terms)
+        score = sum(2 if _matches_identifier_text(t, sentence) else 0 for t in lower_terms)
         if score:
             score += max(0, 2 - idx * 0.1)
             scored.append((score, idx, sentence))
@@ -1012,6 +1079,16 @@ def _identifier_terms(query: str) -> list[str]:
     import re
     text = str(query or "").strip()
     candidates: list[str] = []
+    code_values = _identifier_code_variants(text)
+
+    def add_candidate(value) -> None:
+        for variant in _identifier_variants(value):
+            if variant and variant not in candidates:
+                candidates.append(variant)
+
+    for val in code_values:
+        add_candidate(val)
+
     patterns = [
         r"\b\d{4,}\b",
         r"\b[A-Z0-9]{2,}(?:[-_/][A-Z0-9]+)+\b",
@@ -1019,14 +1096,16 @@ def _identifier_terms(query: str) -> list[str]:
         r"\b(?:HVDC|CASE|PO|BL|BOE|MRR|FANR|INV)[-:/\s]?[A-Z0-9][A-Z0-9\-/]{4,}\b",
     ]
     for pattern in patterns:
+        if pattern == r"\b\d{4,}\b" and code_values:
+            continue
         for match in re.finditer(pattern, text, flags=re.IGNORECASE):
             val = re.sub(r"\s+", " ", match.group(0)).strip(" ,.;:()[]{}")
             if val:
-                candidates.append(val)
+                add_candidate(val)
     for term in _query_terms(text):
         if any(ch.isdigit() for ch in term) or "-" in term or "/" in term:
-            candidates.append(term)
-    return list(dict.fromkeys(candidates))[:8]
+            add_candidate(term)
+    return list(dict.fromkeys(candidates))[:16]
 
 
 def _is_identifier_query(query: str) -> bool:
@@ -1051,16 +1130,15 @@ def _field_hit_reason(row: pd.Series, query: str) -> str:
     ]
     reasons = []
     for term in terms[:6]:
-        t = str(term).lower()
         for col, label in fields:
-            if t and t in str(row.get(col, "") or "").lower():
+            if _matches_identifier_text(term, str(row.get(col, "") or "")):
                 reasons.append(f"{label}:{term}")
                 break
     return ", ".join(list(dict.fromkeys(reasons))[:4])
 
 
 def _field_match_score(row: pd.Series, query: str) -> float:
-    terms = [str(t).lower() for t in (_identifier_terms(query) or _query_terms(query))[:6]]
+    terms = [str(t).lower() for t in (_identifier_terms(query) or _query_terms(query))[:8]]
     if not terms:
         return 0.0
     weighted_fields = [
@@ -1076,8 +1154,8 @@ def _field_match_score(row: pd.Series, query: str) -> float:
     ]
     score = 0.0
     for col, weight in weighted_fields:
-        text = str(row.get(col, "") or "").lower()
-        if text and any(term in text for term in terms):
+        text = str(row.get(col, "") or "")
+        if text and any(_matches_identifier_text(term, text) for term in terms):
             score += weight
     return min(1.0, score)
 
@@ -1092,8 +1170,8 @@ def _exact_match_tier(row: pd.Series, terms: list[str]) -> int:
         "subject", "linkkey", "rowkey", "senderemail", "company_name",
     ]
     for col in strong_fields:
-        text = str(row.get(col, "") or "").lower()
-        if text and any(term.lower() in text for term in terms):
+        text = str(row.get(col, "") or "")
+        if text and any(_matches_identifier_text(term, text) for term in terms):
             return 1
     return 2
 
@@ -1168,6 +1246,19 @@ def _search_copilot_rerank(df: pd.DataFrame, query: str, query_entities: dict | 
         ", ".join(list(dict.fromkeys([part for part in [base, extra] if part]))[:4])
         for base, extra in zip(out["match_reason"].fillna(""), field_reason)
     ]
+    if _is_identifier_query(query) and "exact_rank" in out.columns:
+        exact_rank = pd.to_numeric(out["exact_rank"], errors="coerce")
+        if exact_rank.notna().any():
+            out["_identifier_exact_tier"] = pd.to_numeric(
+                out.get("exact_tier", pd.Series(9, index=out.index)),
+                errors="coerce",
+            ).fillna(9)
+            out["_identifier_exact_rank"] = exact_rank.fillna(999999)
+            out = out.sort_values(
+                ["_identifier_exact_tier", "_identifier_exact_rank", "search_copilot_score"],
+                ascending=[True, True, False],
+            )
+            return out.drop(columns=["_identifier_exact_tier", "_identifier_exact_rank"], errors="ignore")
     return out.sort_values("search_copilot_score", ascending=False)
 
 
