@@ -46,26 +46,27 @@ DELIVERY_ASC_SQL = (
 _T = {
     "ko": {
         # page
-        "caption": "OUTLOOK HVDC 전체 이메일 데이터 — DuckDB FTS · Gemini AI · Samsung C&T / ADNOC",
+        "caption": "OUTLOOK HVDC 전체 이메일 데이터 — 빠른 검색 · AI 요약 · Samsung C&T / ADNOC",
+        "header_badge": "51,964개 메일 · 빠른 검색",
         # sidebar
         "label_search_filter": "검색 및 필터",
         "label_pdf_folders": "PDF 첨부파일 폴더",
-        "kw_search": "키워드 검색 (FTS)",
+        "kw_search": "키워드 검색",
         "kw_placeholder": "예: DSV, cable, 5000684244",
-        "kw_help": "Subject · SenderName · Body · HVDC Cases 전체 텍스트 검색",
+        "kw_help": "제목, 발신자, 본문, HVDC Case 전체에서 검색합니다.",
         "adv_filter": "고급 필터",
         "sender_filter_label": "발신자 이메일 포함",
         "sender_filter_ph": "@dsv.com",
         "case_filter_label": "HVDC Case 번호",
         "case_filter_ph": "HVDC-ADOPT-SEI-0008",
         "max_rows": "최대 결과 수",
-        "db_diag": "DB 진단",
+        "db_diag": "데이터 상태",
         "confirm_reset": "DB 재다운로드를 확인합니다 (기존 캐시가 모두 삭제됩니다)",
         "btn_reset": "캐시 초기화 + DB 재다운로드",
         # tabs
         "tab_search": "검색",
         "tab_analytics": "분석",
-        "tab_semantic": "시맨틱 검색",
+        "tab_semantic": "의미로 찾기",
         # metrics
         "metric_match": "매칭 건수",
         "metric_match_help": "현재 필터 조건과 일치하는 이메일 수",
@@ -132,23 +133,21 @@ _T = {
         "col_dim": "항목",
         "col_count": "이메일 수",
         # semantic tab
-        "sem_title": "시맨틱 검색 (all-MiniLM-L6-v2, 384 dim)",
+        "sem_title": "의미가 비슷한 메일 찾기",
         "sem_no_emb": (
-            "임베딩 데이터가 없습니다. 로컬에서 `build_db.py`를 실행하여 DB를 재빌드하세요:\n\n"
-            "```bash\npython build_db.py\n```\n\n"
-            "완료 후 GitHub Release에 v2.0으로 재업로드하고 `DB_URL`을 업데이트하세요."
+            "의미 검색용 데이터가 없습니다. 관리자에게 데이터 재생성을 요청하세요."
         ),
-        "sem_query_label": "의미 기반 검색어",
-        "sem_query_ph": "예: transformer installation schedule delay",
-        "sem_query_help": "정확한 키워드 대신 의미로 검색합니다",
-        "sem_top_k": "결과 수",
-        "sem_hybrid": "BM25 + 시맨틱 Hybrid (권장)",
-        "sem_run": "시맨틱 검색 실행",
-        "sem_embedding": "임베딩 생성 중...",
-        "sem_searching": "벡터 검색 중...",
-        "sem_no_result": "결과 없음 — 다른 검색어를 시도하거나 Hybrid 모드를 켜세요.",
+        "sem_query_label": "찾고 싶은 내용",
+        "sem_query_ph": "예: 변압기 설치 일정 지연",
+        "sem_query_help": "정확한 단어가 달라도 비슷한 의미의 메일을 찾습니다.",
+        "sem_top_k": "표시할 결과 수",
+        "sem_hybrid": "키워드 검색도 함께 사용 (권장)",
+        "sem_run": "관련 메일 찾기",
+        "sem_embedding": "검색어 이해 중...",
+        "sem_searching": "관련 메일 찾는 중...",
+        "sem_no_result": "결과 없음 — 다른 표현으로 검색하거나 키워드 검색 함께 사용을 켜세요.",
         "sem_done": "검색 완료",
-        "col_similarity": "유사도",
+        "col_similarity": "관련도",
         "col_company": "회사",
         # axis / hover labels
         "axis_month": "연월",
@@ -164,24 +163,24 @@ _T = {
         "snip_header": "관련 본문 발췌",
         "snip_none": "(일치 문장 없음)",
         "col_snippet": "발췌",
-        "sim_header": "유사 이메일 TOP 5",
-        "sim_no_emb": "임베딩 데이터 없음 — 유사 검색 불가",
-        "sim_searching": "유사 이메일 검색 중...",
-        "col_sim_score": "유사도",
+        "sim_header": "관련 메일 5건",
+        "sim_no_emb": "관련 메일을 찾기 위한 데이터가 없습니다.",
+        "sim_searching": "관련 메일 찾는 중...",
+        "col_sim_score": "관련도",
         "sem_translate": "검색어 확장 중...",
-        "sem_translated": "번역된 검색어",
+        "sem_translated": "확장된 검색어",
         "sem_no_key_translate": "Gemini API 키 없음 — 원문으로 검색합니다.",
-        "bm25_translate": "한국어 감지 → 영어 번역 후 키워드 검색:",
+        "bm25_translate": "한국어 검색어를 키워드 검색용으로 확장:",
         "btn_bulk_summary": "AI 일괄 요약 (상위 10건)",
         "bulk_summary_spinner": "Gemini 분석 중...",
         "bulk_summary_header": "검색 결과 AI 요약",
-        "query_rewrite": "쿼리 확장 사용 (사전 + Gemini 옵션)",
+        "query_rewrite": "검색어 확장 사용 (사전 + Gemini 옵션)",
         "query_rewrite_caption": "확장된 검색어:",
         "detected_entities": "감지된 항목",
         "col_entities": "항목",
         "col_match_reason": "검색 이유",
         "refine_placeholder": "결과 좁히기 (예: 2025년만, DSV만)",
-        "btn_similar": "유사 이메일 5건",
+        "btn_similar": "관련 메일 5건",
         "btn_timeline": "Case 타임라인",
         "btn_sender_history": "발신자 히스토리",
         "btn_cluster": "이슈 유형 자동 분류",
@@ -189,31 +188,32 @@ _T = {
         "btn_key_decisions": "핵심 결정 이메일 TOP 10",
         "key_decisions_header": "핵심 의사결정 이메일",
         "nl_query_placeholder": "자연어로 이메일 검색",
-        "nl_query_caption": "Gemini가 SQL로 변환합니다 (예: 2025년 3월 Mammoet MRR)",
+        "nl_query_caption": "문장으로 입력하면 조건 검색으로 바꿉니다 (예: 2025년 3월 Mammoet MRR)",
         "nl_query_header": "자연어 검색 결과",
     },
     "en": {
         # page
-        "caption": "OUTLOOK HVDC Email Archive — DuckDB FTS · Gemini AI · Samsung C&T / ADNOC",
+        "caption": "OUTLOOK HVDC Email Archive — Fast Search · AI Summary · Samsung C&T / ADNOC",
+        "header_badge": "51,964 emails · Fast Search",
         # sidebar
         "label_search_filter": "Search & Filter",
         "label_pdf_folders": "PDF Attachment Folders",
-        "kw_search": "Keyword Search (FTS)",
+        "kw_search": "Keyword Search",
         "kw_placeholder": "e.g. DSV, cable, 5000684244",
-        "kw_help": "Full-text search across Subject · SenderName · Body · HVDC Cases",
+        "kw_help": "Search across subject, sender, body, and HVDC cases.",
         "adv_filter": "Advanced Filter",
         "sender_filter_label": "Sender email contains",
         "sender_filter_ph": "@dsv.com",
         "case_filter_label": "HVDC Case No.",
         "case_filter_ph": "HVDC-ADOPT-SEI-0008",
         "max_rows": "Max results",
-        "db_diag": "DB Diagnostics",
+        "db_diag": "Data Status",
         "confirm_reset": "Confirm DB re-download (all cache will be cleared)",
         "btn_reset": "Clear Cache + Re-download DB",
         # tabs
         "tab_search": "Search",
         "tab_analytics": "Analytics",
-        "tab_semantic": "Semantic Search",
+        "tab_semantic": "Find by Meaning",
         # metrics
         "metric_match": "Matched",
         "metric_match_help": "Emails matching current filter conditions",
@@ -280,23 +280,21 @@ _T = {
         "col_dim": "Dimension",
         "col_count": "Email Count",
         # semantic tab
-        "sem_title": "Semantic Search (all-MiniLM-L6-v2, 384 dim)",
+        "sem_title": "Find Emails with Similar Meaning",
         "sem_no_emb": (
-            "No embedding data found. Run `build_db.py` locally to rebuild the DB:\n\n"
-            "```bash\npython build_db.py\n```\n\n"
-            "Then re-upload to GitHub Release as v2.0 and update `DB_URL`."
+            "Meaning search data is not available. Ask an administrator to rebuild the data."
         ),
-        "sem_query_label": "Semantic search query",
+        "sem_query_label": "What are you looking for?",
         "sem_query_ph": "e.g. transformer installation schedule delay",
-        "sem_query_help": "Search by meaning instead of exact keywords",
-        "sem_top_k": "Results",
-        "sem_hybrid": "BM25 + Semantic Hybrid (recommended)",
-        "sem_run": "Run Semantic Search",
-        "sem_embedding": "Generating embeddings...",
-        "sem_searching": "Vector search in progress...",
-        "sem_no_result": "No results — try different keywords or enable Hybrid mode.",
+        "sem_query_help": "Find emails with similar meaning, even when the words are different.",
+        "sem_top_k": "Results to show",
+        "sem_hybrid": "Also use keyword search (recommended)",
+        "sem_run": "Find Related Emails",
+        "sem_embedding": "Understanding query...",
+        "sem_searching": "Finding related emails...",
+        "sem_no_result": "No results — try different wording or enable keyword search too.",
         "sem_done": "Search complete",
-        "col_similarity": "Similarity",
+        "col_similarity": "Relevance",
         "col_company": "Company",
         # axis / hover labels
         "axis_month": "Month",
@@ -312,24 +310,24 @@ _T = {
         "snip_header": "Matching Snippet",
         "snip_none": "(no match)",
         "col_snippet": "Snippet",
-        "sim_header": "TOP 5 Similar Emails",
-        "sim_no_emb": "No embedding — similarity search unavailable.",
-        "sim_searching": "Finding similar emails...",
-        "col_sim_score": "Similarity",
+        "sim_header": "Related Emails (5)",
+        "sim_no_emb": "Related-email data is not available.",
+        "sim_searching": "Finding related emails...",
+        "col_sim_score": "Relevance",
         "sem_translate": "Expanding query...",
-        "sem_translated": "Translated query",
+        "sem_translated": "Expanded search terms",
         "sem_no_key_translate": "No Gemini key — searching with original query.",
-        "bm25_translate": "Korean detected → translated for FTS:",
+        "bm25_translate": "Korean query expanded for keyword search:",
         "btn_bulk_summary": "AI Summary (Top 10)",
         "bulk_summary_spinner": "Gemini summarizing...",
         "bulk_summary_header": "Search Results AI Summary",
-        "query_rewrite": "Expand query (glossary + optional Gemini)",
-        "query_rewrite_caption": "Expanded query:",
+        "query_rewrite": "Expand search terms (glossary + optional Gemini)",
+        "query_rewrite_caption": "Expanded search terms:",
         "detected_entities": "Detected",
         "col_entities": "Entities",
         "col_match_reason": "Why matched",
         "refine_placeholder": "Refine results (e.g. 2025 only, DSV only)",
-        "btn_similar": "Similar Emails (5)",
+        "btn_similar": "Related Emails (5)",
         "btn_timeline": "Case Timeline",
         "btn_sender_history": "Sender History",
         "btn_cluster": "Auto-Cluster by Issue Type",
@@ -337,7 +335,7 @@ _T = {
         "btn_key_decisions": "Key Decision Emails TOP 10",
         "key_decisions_header": "Key Decision Emails",
         "nl_query_placeholder": "Natural language email search",
-        "nl_query_caption": "Gemini converts to SQL (e.g. MRR from Mammoet in March 2025)",
+        "nl_query_caption": "Type a sentence and it will be converted into filtered search (e.g. MRR from Mammoet in March 2025)",
         "nl_query_header": "Natural Language Query Results",
     },
 }
@@ -1630,7 +1628,7 @@ st.markdown(f"""
         <div class="hvdc-header-title">HVDC Email Search</div>
         <div class="hvdc-header-caption">{T["caption"]}</div>
     </div>
-    <div class="hvdc-header-badge">51,964 emails · DuckDB FTS</div>
+    <div class="hvdc-header-badge">{T["header_badge"]}</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -1735,9 +1733,15 @@ with st.sidebar:
             try:
                 _emb_df = run_query("SELECT COUNT(*) FROM emails WHERE embedding IS NOT NULL")
                 _emb_n = int(_emb_df.iloc[0, 0]) if not _emb_df.empty else 0
-                st.code(f"Embeddings: {_emb_n:,} / 51,964", language="text")
+                _meaning_label = "의미 검색 데이터" if st.session_state.lang == "ko" else "Meaning search data"
+                st.code(f"{_meaning_label}: {_emb_n:,} / 51,964", language="text")
             except Exception as _e:
-                st.code(f"Embedding check failed:\n{_e}", language="text")
+                _meaning_error = (
+                    "의미 검색 데이터 확인 실패"
+                    if st.session_state.lang == "ko"
+                    else "Meaning search data check failed"
+                )
+                st.code(f"{_meaning_error}:\n{_e}", language="text")
         else:
             st.code(f"Path: {DB_LOCAL}\nNot found ✗", language="text")
 
@@ -2911,11 +2915,11 @@ with tab_semantic:
     else:
         # Indicate which search backend is active
         if _has_chunk_emb:
-            st.caption("🔍 청크 레벨 HNSW 시맨틱 검색 (email_chunks)" if st.session_state.lang == "ko"
-                       else "🔍 Chunk-level HNSW semantic search (email_chunks)")
+            st.caption("🔍 본문 문장까지 비교해 관련 메일을 찾습니다." if st.session_state.lang == "ko"
+                       else "🔍 Finds related emails by comparing message text.")
         else:
-            st.caption("🔍 이메일 레벨 시맨틱 검색 (fallback)" if st.session_state.lang == "ko"
-                       else "🔍 Email-level semantic search (fallback)")
+            st.caption("🔍 이메일 전체 내용을 기준으로 관련 메일을 찾습니다." if st.session_state.lang == "ko"
+                       else "🔍 Finds related emails from the whole email text.")
 
         google_api_key = st.secrets.get("google_api_key", "")
         sem_query = st.text_input(
@@ -3002,7 +3006,7 @@ with tab_semantic:
                 }
                 if "chunk_text" in result_display_df.columns:
                     col_config["chunk_text"] = st.column_config.TextColumn(
-                        "매칭 청크" if st.session_state.lang == "ko" else "Matching Chunk",
+                        "관련 본문" if st.session_state.lang == "ko" else "Relevant Text",
                         width=300,
                     )
                 st.dataframe(
@@ -3063,7 +3067,7 @@ with tab_semantic:
                                 and str(_selected_sem_row.iloc[0].get("chunk_text", "") or "").strip()
                             ):
                                 with st.expander(
-                                    "매칭 청크" if st.session_state.lang == "ko" else "Matching Chunk",
+                                    "관련 본문" if st.session_state.lang == "ko" else "Relevant Text",
                                     expanded=False,
                                 ):
                                     st.write(str(_selected_sem_row.iloc[0].get("chunk_text", "")))
