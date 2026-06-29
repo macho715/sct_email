@@ -2880,37 +2880,138 @@ with tab_semantic:
                         result_df = vec_df.head(sem_top_k)
                         score_col_name = "cosine_score"
 
-                    if len(result_df) == 0:
-                        st.warning(T["sem_no_result"])
-                    else:
-                        st.success(f"{T['sem_done']} — {len(result_df)}")
-                    result_display_df = result_df.drop(
-                        columns=[
-                            "bm25_norm", "vector_norm", "entity_match",
-                            "recency_score", "decision_signal", "field_match",
-                            "exact_rank", "exact_score", "match_reason",
-                            "section",
-                        ],
-                        errors="ignore",
+                    st.session_state["sem_result_df"] = result_df.copy()
+                    st.session_state["sem_score_col_name"] = score_col_name
+                    st.session_state["sem_result_query"] = sem_query
+
+        sem_result_df = st.session_state.get("sem_result_df")
+        if isinstance(sem_result_df, pd.DataFrame):
+            score_col_name = st.session_state.get("sem_score_col_name", "cosine_score")
+            if len(sem_result_df) == 0:
+                st.warning(T["sem_no_result"])
+            else:
+                st.success(f"{T['sem_done']} — {len(sem_result_df)}")
+                result_display_df = sem_result_df.drop(
+                    columns=[
+                        "bm25_norm", "vector_norm", "entity_match",
+                        "recency_score", "decision_signal", "field_match",
+                        "exact_rank", "exact_score", "match_reason",
+                        "section",
+                    ],
+                    errors="ignore",
+                )
+                result_display_df = _format_result_columns(result_display_df)
+                col_config = {
+                    "no":            st.column_config.TextColumn(T["col_no"], width=70),
+                    "subject":       st.column_config.TextColumn(T["col_subject"],    width=200),
+                    "sendername":    st.column_config.TextColumn(T["col_sender"],     width=150),
+                    "deliverytime":  st.column_config.TextColumn(T["col_received"],   width=140),
+                    "company_name":  st.column_config.TextColumn(T["col_company"],    width=150),
+                    score_col_name:  st.column_config.NumberColumn(T["col_similarity"], format="%.4f"),
+                }
+                if "chunk_text" in result_display_df.columns:
+                    col_config["chunk_text"] = st.column_config.TextColumn(
+                        "매칭 청크" if st.session_state.lang == "ko" else "Matching Chunk",
+                        width=300,
                     )
-                    result_display_df = _format_result_columns(result_display_df)
-                    col_config = {
-                        "no":            st.column_config.TextColumn(T["col_no"], width=70),
-                        "subject":       st.column_config.TextColumn(T["col_subject"],    width=200),
-                        "sendername":    st.column_config.TextColumn(T["col_sender"],     width=150),
-                        "deliverytime":  st.column_config.TextColumn(T["col_received"],   width=140),
-                        "company_name":  st.column_config.TextColumn(T["col_company"],    width=150),
-                        score_col_name:  st.column_config.NumberColumn(T["col_similarity"], format="%.4f"),
-                    }
-                    if "chunk_text" in result_display_df.columns:
-                        col_config["chunk_text"] = st.column_config.TextColumn(
-                            "매칭 청크" if st.session_state.lang == "ko" else "Matching Chunk",
-                            width=300,
+                st.dataframe(
+                    result_display_df,
+                    width="stretch",
+                    hide_index=True,
+                    height=500,
+                    column_config=col_config,
+                )
+
+                st.subheader(T["email_detail"])
+                sem_detail_subjects = {}
+                for _, _sem_row in sem_result_df.head(100).iterrows():
+                    _sem_no = _clean_id_value(_sem_row.get("no", ""))
+                    if not _sem_no or _sem_no in sem_detail_subjects:
+                        continue
+                    sem_detail_subjects[_sem_no] = str(_sem_row.get("subject", "") or "")
+
+                if sem_detail_subjects:
+                    _sem_options = list(sem_detail_subjects)
+                    if st.session_state.get("sem_detail_select") not in _sem_options:
+                        st.session_state.pop("sem_detail_select", None)
+                    sem_row_no = st.selectbox(
+                        T["select_email"],
+                        options=_sem_options,
+                        format_func=lambda x: f"#{x}  " + sem_detail_subjects.get(x, "")[:60],
+                        key="sem_detail_select",
+                    )
+                    if sem_row_no:
+                        sem_row_no_key = _clean_id_value(sem_row_no)
+                        sem_body_df = run_query(
+                            "SELECT subject, sendername, senderemail, deliverytime, "
+                            "recipientto, plaintextbody, linkkey "
+                            f"FROM emails WHERE {_id_lookup_where('no')}",
+                            _id_lookup_params(sem_row_no_key),
                         )
-                    st.dataframe(
-                        result_display_df,
-                        width="stretch",
-                        hide_index=True,
-                        height=500,
-                        column_config=col_config,
-                    )
+                        if not sem_body_df.empty:
+                            sem_detail = sem_body_df.iloc[0]
+                            col_a, col_b = st.columns(2)
+                            col_a.markdown(f"**{T['col_subject']}**  \n{sem_detail['subject']}")
+                            col_a.markdown(
+                                f"**{T['col_sender']}**  \n"
+                                f"{sem_detail['sendername']}  \n`{sem_detail['senderemail']}`"
+                            )
+                            col_b.markdown(
+                                f"**{T['col_received']}**  \n"
+                                f"{_format_datetime_value(sem_detail['deliverytime'])}"
+                            )
+                            col_b.markdown(f"**{T['col_recipients']}**  \n{sem_detail['recipientto']}")
+
+                            _sem_body_text = str(sem_detail["plaintextbody"] or "")
+                            _selected_sem_row = sem_result_df[
+                                sem_result_df["no"].apply(_clean_id_value) == sem_row_no_key
+                            ]
+                            if (
+                                not _selected_sem_row.empty
+                                and "chunk_text" in _selected_sem_row.columns
+                                and str(_selected_sem_row.iloc[0].get("chunk_text", "") or "").strip()
+                            ):
+                                with st.expander(
+                                    "매칭 청크" if st.session_state.lang == "ko" else "Matching Chunk",
+                                    expanded=False,
+                                ):
+                                    st.write(str(_selected_sem_row.iloc[0].get("chunk_text", "")))
+
+                            sem_linkkey = (
+                                sem_detail.get("linkkey") if hasattr(sem_detail, "get") else sem_detail["linkkey"]
+                            )
+                            sem_pdf_parts = _pdf_parts_for_email(
+                                sem_linkkey,
+                                sem_detail.get("subject", ""),
+                                _sem_body_text,
+                            )
+                            if sem_pdf_parts:
+                                sem_pdf_download_parts = _pdf_download_parts_for_email(
+                                    sem_linkkey,
+                                    sem_detail.get("subject", ""),
+                                    _sem_body_text,
+                                )
+                                _sem_label_multi = len(sem_pdf_parts) > 1
+                                for _i, ((_plabel, _purl), (_, _durl)) in enumerate(
+                                    zip(sem_pdf_parts, sem_pdf_download_parts),
+                                    1,
+                                ):
+                                    _view_col, _download_col = st.columns(2)
+                                    _view_col.link_button(
+                                        _plabel if _sem_label_multi else T["btn_pdf"],
+                                        _purl,
+                                        type="primary",
+                                        width="stretch",
+                                    )
+                                    _download_col.link_button(
+                                        f"{T['btn_pdf_download']} {_i}" if _sem_label_multi else T["btn_pdf_download"],
+                                        _durl,
+                                        width="stretch",
+                                    )
+
+                            st.text_area(
+                                T["col_body"],
+                                value=_sem_body_text or f"({T['col_body']} N/A)",
+                                height=380,
+                                key=f"sem_body_{sem_row_no_key}",
+                            )
